@@ -17,6 +17,7 @@ import jwt
 import time
 
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 
 
 
@@ -33,6 +34,19 @@ load_dotenv()
 # =========================================================
 
 app = FastAPI()
+
+
+# =========================================================
+# CORS Config
+# =========================================================
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Replace with frontend URL in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # =========================================================
