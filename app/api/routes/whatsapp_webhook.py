@@ -11,6 +11,10 @@ from app.services.whatsapp_extractor import extract_whatsapp_events
 from app.services.campaign_service import process_button_click
 import time
 
+from loguru import logger
+
+
+
 
 logger = logging.getLogger("whatsapp-webhook")
 
@@ -58,6 +62,9 @@ async def receive_whatsapp_webhook(request: Request):
 
     try:
         payload = await request.json()
+
+
+        logger.critical(f"webhook Payload======>{payload}")
 
         logger.info("WhatsApp webhook payload received:")
         logger.info(json.dumps(payload, indent=2))
