@@ -31,7 +31,7 @@ WHATSAPP_GRAPH_API_VERSION = "v20.0"
 TEMPLATE_LANGUAGE_CODE = "en_US"
 
 DEFAULT_CAMPAIGN_NAME = "upsc_orientation_may31"
-
+TEMPLATE_INVITE_FALLBACK_UTILITY = "appointment_reminder_2"
 TEMPLATE_INVITE = "upsc_orientation_invite_may31"
 TEMPLATE_SEAT_CONFIRMED = "upsc_orientation_seat_confirmed_may31"
 TEMPLATE_COUNSELLING = "upsc_orientation_counselling_31st"
