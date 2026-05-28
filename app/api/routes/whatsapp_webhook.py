@@ -66,6 +66,7 @@ async def receive_whatsapp_webhook(request: Request):
 
         logger.critical(f"webhook Payload======>{payload}")
 
+        
         logger.info("WhatsApp webhook payload received:")
         logger.info(json.dumps(payload, indent=2))
 
