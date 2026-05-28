@@ -16,7 +16,7 @@ from loguru import logger
 
 
 
-logger = logging.getLogger("whatsapp-webhook")
+# logger = logging.getLogger("whatsapp-webhook")
 
 router = APIRouter(
     prefix="/webhooks",

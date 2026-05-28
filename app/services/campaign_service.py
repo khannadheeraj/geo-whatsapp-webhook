@@ -10,8 +10,12 @@ from app.db.mongodb import get_collection
 from app.services.whatsapp_sender import send_whatsapp_template
 import time
 
+from loguru import logger
 
-logger = logging.getLogger("whatsapp-webhook")
+
+
+
+# logger = logging.getLogger("whatsapp-webhook")
 
 
 def normalize_button_response(button_text: str):
@@ -46,12 +50,12 @@ def process_button_click(event: Dict[str, Any]):
 
     button_action = normalize_button_response(button_text)
 
+    logger.critical(f"button_action======>{button_action}")
+
     if not button_action:
-        logger.info(
-            "Unknown button clicked | phone=%s button=%s",
-            phone,
-            button_text
-        )
+        
+        logger.info("Unknown button clicked | phone=%s button=%s", phone,button_text )
+        
         return
 
     campaign_recipients = get_collection("campaign_recipients")
