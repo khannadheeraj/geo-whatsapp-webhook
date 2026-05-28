@@ -3,7 +3,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List
-
+import requests
 from dotenv import load_dotenv
 
 from fastapi import FastAPI, Request, HTTPException
@@ -85,6 +85,33 @@ ADMIN_USER_PASSWORD = os.getenv(
 )
 
 
+
+WHATSAPP_ACCESS_TOKEN = os.getenv(
+    "WHATSAPP_ACCESS_TOKEN",
+    ""
+).strip()
+
+WHATSAPP_PHONE_NUMBER_ID = os.getenv(
+    "WHATSAPP_PHONE_NUMBER_ID",
+    ""
+).strip()
+
+WHATSAPP_GRAPH_API_VERSION = os.getenv(
+    "WHATSAPP_GRAPH_API_VERSION",
+    "v25.0"
+).strip()
+
+DEFAULT_CAMPAIGN_NAME = "upsc_orientation_may31"
+
+TEMPLATE_INVITE = "upsc_orientation_invite_may31"
+
+TEMPLATE_SEAT_CONFIRMED = "upsc_orientation_seat_confirmed_may31"
+
+TEMPLATE_COUNSELLING = "upsc_orientation_counselling_31st"
+
+TEMPLATE_LANGUAGE_CODE = "en_US"
+
+
 # =========================================================
 # MongoDB Globals
 # =========================================================
@@ -107,6 +134,147 @@ def get_collection(collection_name: str) -> Collection:
         raise RuntimeError("MongoDB is not connected.")
 
     return db[collection_name]
+
+def clean_phone_number(phone: str) -> str:
+    """
+    WhatsApp Cloud API expects country code without +.
+    Example:
+    +91 98765 43210 -> 919876543210
+    """
+
+    if not phone:
+        return ""
+
+    cleaned = (
+        phone.strip()
+        .replace("+", "")
+        .replace(" ", "")
+        .replace("-", "")
+        .replace("(", "")
+        .replace(")", "")
+    )
+
+    return cleaned
+
+
+def send_whatsapp_template(
+    phone: str,
+    template_name: str,
+    name: str = ""
+):
+
+    if not WHATSAPP_ACCESS_TOKEN:
+        logger.error("WHATSAPP_ACCESS_TOKEN is not configured.")
+        return {
+            "success": False,
+            "error": "WHATSAPP_ACCESS_TOKEN_NOT_CONFIGURED",
+            "response": None
+        }
+
+    if not WHATSAPP_PHONE_NUMBER_ID:
+        logger.error("WHATSAPP_PHONE_NUMBER_ID is not configured.")
+        return {
+            "success": False,
+            "error": "WHATSAPP_PHONE_NUMBER_ID_NOT_CONFIGURED",
+            "response": None
+        }
+
+    url = (
+        f"https://graph.facebook.com/"
+        f"{WHATSAPP_GRAPH_API_VERSION}/"
+        f"{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    variable_name = name.strip() if name else "there"
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "template",
+        "template": {
+            "name": template_name,
+            "language": {
+                "code": TEMPLATE_LANGUAGE_CODE
+            },
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {
+                            "type": "text",
+                            "text": variable_name
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+    try:
+
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=20
+        )
+
+        try:
+            response_data = response.json()
+        except Exception:
+            response_data = {
+                "rawText": response.text
+            }
+
+        if response.status_code >= 400:
+
+            logger.error(
+                "Failed to send WhatsApp template | phone=%s template=%s response=%s",
+                phone,
+                template_name,
+                response_data
+            )
+
+            return {
+                "success": False,
+                "error": "WHATSAPP_API_ERROR",
+                "statusCode": response.status_code,
+                "response": response_data
+            }
+
+        logger.info(
+            "WhatsApp template sent successfully | phone=%s template=%s response=%s",
+            phone,
+            template_name,
+            response_data
+        )
+
+        return {
+            "success": True,
+            "error": None,
+            "statusCode": response.status_code,
+            "response": response_data
+        }
+
+    except Exception as e:
+
+        logger.exception(
+            "Exception while sending WhatsApp template | phone=%s template=%s error=%s",
+            phone,
+            template_name,
+            str(e)
+        )
+
+        return {
+            "success": False,
+            "error": str(e),
+            "response": None
+        }
 
 
 # =========================================================
@@ -230,13 +398,40 @@ def extract_whatsapp_events(
                 message_type = message.get("type")
 
                 text_body = None
+                button_text = None
+                button_payload = None
 
+                # Normal text message
                 if message_type == "text":
 
                     text_body = (
                         message.get("text", {})
                         .get("body")
                     )
+
+                # Template quick reply button
+                elif message_type == "button":
+
+                    button = message.get("button", {})
+
+                    button_text = button.get("text")
+                    button_payload = button.get("payload")
+
+                # Interactive button reply
+                elif message_type == "interactive":
+
+                    interactive = message.get("interactive", {})
+                    interactive_type = interactive.get("type")
+
+                    if interactive_type == "button_reply":
+
+                        button_reply = interactive.get(
+                            "button_reply",
+                            {}
+                        )
+
+                        button_text = button_reply.get("title")
+                        button_payload = button_reply.get("id")
 
                 event = {
                     "eventType": "incoming_message",
@@ -245,6 +440,8 @@ def extract_whatsapp_events(
                     "timestamp": message.get("timestamp"),
                     "messageType": message_type,
                     "text": text_body,
+                    "buttonText": button_text,
+                    "buttonPayload": button_payload,
                     "phoneNumberId": phone_number_id,
                     "displayPhoneNumber": display_phone_number,
                     "rawMessage": message,
@@ -281,6 +478,289 @@ def extract_whatsapp_events(
                 extracted_events.append(event)
 
     return extracted_events
+
+
+
+
+def normalize_button_response(button_text: str):
+
+    if not button_text:
+        return None
+
+    cleaned_button_text = button_text.strip().lower()
+
+    if cleaned_button_text == "yes, i will attend":
+
+        return {
+            "normalizedResponse": "YES_ATTEND",
+            "leadStatus": "SEAT_CONFIRMED",
+            "nextTemplate": TEMPLATE_SEAT_CONFIRMED,
+        }
+
+    if cleaned_button_text == "talk to counselor":
+
+        return {
+            "normalizedResponse": "TALK_COUNSELOR",
+            "leadStatus": "COUNSELLOR_REQUESTED",
+            "nextTemplate": TEMPLATE_COUNSELLING,
+        }
+
+    return None
+
+
+def send_whatsapp_template(
+    phone: str,
+    template_name: str,
+    name: str = ""
+):
+
+    if not WHATSAPP_ACCESS_TOKEN:
+        logger.error("WHATSAPP_ACCESS_TOKEN is not configured.")
+        return False
+
+    if not WHATSAPP_PHONE_NUMBER_ID:
+        logger.error("WHATSAPP_PHONE_NUMBER_ID is not configured.")
+        return False
+
+    url = (
+        f"https://graph.facebook.com/"
+        f"{WHATSAPP_GRAPH_API_VERSION}/"
+        f"{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    # Fallback name if lead name is missing
+    template_name_value = name.strip() if name else "there"
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "template",
+        "template": {
+            "name": template_name,
+            "language": {
+                "code": TEMPLATE_LANGUAGE_CODE
+            },
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {
+                            "type": "text",
+                            "text": template_name_value
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+    try:
+
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=20
+        )
+
+        response_data = response.json()
+
+        if response.status_code >= 400:
+
+            logger.error(
+                "Failed to send WhatsApp template | phone=%s template=%s response=%s",
+                phone,
+                template_name,
+                response_data
+            )
+
+            return False
+
+        logger.info(
+            "WhatsApp template sent successfully | phone=%s template=%s response=%s",
+            phone,
+            template_name,
+            response_data
+        )
+
+        # Optional log
+        whatsapp_message_logs = get_collection(
+            "whatsapp_message_logs"
+        )
+
+        whatsapp_message_logs.insert_one(
+            {
+                "phone": phone,
+                "templateName": template_name,
+                "direction": "OUTBOUND",
+                "requestPayload": payload,
+                "responsePayload": response_data,
+                "createdAt": now_utc(),
+                "updatedAt": now_utc(),
+            }
+        )
+
+        return True
+
+    except Exception as e:
+
+        logger.exception(
+            "Exception while sending WhatsApp template | phone=%s template=%s error=%s",
+            phone,
+            template_name,
+            str(e)
+        )
+
+        return False
+
+
+def process_button_click(event: Dict[str, Any]):
+
+    phone = event.get("from")
+    button_text = event.get("buttonText")
+
+    if not phone or not button_text:
+        return
+
+    button_action = normalize_button_response(
+        button_text
+    )
+
+    if not button_action:
+
+        logger.info(
+            "Unknown button clicked | phone=%s button=%s",
+            phone,
+            button_text
+        )
+
+        return
+
+    campaign_recipients = get_collection(
+        "campaign_recipients"
+    )
+
+    recipient = campaign_recipients.find_one(
+        {
+            "phone": phone,
+            "campaignName": DEFAULT_CAMPAIGN_NAME,
+        }
+    )
+
+    if not recipient:
+
+        logger.warning(
+            "No campaign recipient found for phone=%s campaign=%s",
+            phone,
+            DEFAULT_CAMPAIGN_NAME
+        )
+
+        return
+
+    # ==========================================
+    # First Click Wins
+    # ==========================================
+
+    if recipient.get("responseLocked") is True:
+
+        logger.info(
+            "Response already locked. Ignoring button click | phone=%s button=%s existingResponse=%s",
+            phone,
+            button_text,
+            recipient.get("normalizedResponse")
+        )
+
+        # Optional: store ignored click for debugging
+        ignored_clicks = get_collection(
+            "ignored_button_clicks"
+        )
+
+        ignored_clicks.insert_one(
+            {
+                "phone": phone,
+                "campaignName": DEFAULT_CAMPAIGN_NAME,
+                "buttonText": button_text,
+                "buttonPayload": event.get("buttonPayload"),
+                "reason": "response_already_locked",
+                "existingResponse": recipient.get("normalizedResponse"),
+                "rawEvent": event,
+                "createdAt": now_utc(),
+                "updatedAt": now_utc(),
+            }
+        )
+
+        return
+
+    # Atomic update:
+    # This protects from duplicate webhook race condition.
+    update_result = campaign_recipients.update_one(
+        {
+            "_id": recipient["_id"],
+            "responseLocked": {
+                "$ne": True
+            }
+        },
+        {
+            "$set": {
+                "responseLocked": True,
+                "firstButtonClicked": button_text,
+                "buttonPayload": event.get("buttonPayload"),
+                "normalizedResponse": button_action["normalizedResponse"],
+                "currentLeadStatus": button_action["leadStatus"],
+                "followupTemplateToSend": button_action["nextTemplate"],
+                "responseAt": now_utc(),
+                "updatedAt": now_utc(),
+            }
+        }
+    )
+
+    if update_result.modified_count == 0:
+
+        logger.info(
+            "Button click skipped because response was already locked by another request | phone=%s",
+            phone
+        )
+
+        return
+
+    lead_name = recipient.get("name", "")
+
+    template_sent = send_whatsapp_template(
+        phone=phone,
+        template_name=button_action["nextTemplate"],
+        name=lead_name
+    )
+
+    campaign_recipients.update_one(
+        {
+            "_id": recipient["_id"]
+        },
+        {
+            "$set": {
+                "followupTemplateSent": (
+                    button_action["nextTemplate"]
+                    if template_sent
+                    else None
+                ),
+                "followupTemplateStatus": (
+                    "SENT"
+                    if template_sent
+                    else "FAILED"
+                ),
+                "followupTemplateSentAt": (
+                    now_utc()
+                    if template_sent
+                    else None
+                ),
+                "updatedAt": now_utc(),
+            }
+        }
+    )
 
 
 # =========================================================
@@ -382,6 +862,17 @@ async def receive_whatsapp_webhook(request: Request):
                 len(extracted_events)
             )
 
+            for event in extracted_events:
+
+
+                if event.get("eventType") != "incoming_message":
+                    continue
+
+                if not event.get("buttonText"):
+                    continue
+
+                process_button_click(event)
+
         else:
 
             logger.info(
@@ -431,6 +922,14 @@ class LoginRequestModel(BaseModel):
     password: str
 
 
+class LeadInviteModel(BaseModel):
+    name: str
+    phone: str
+
+
+class CampaignInviteRequestModel(BaseModel):
+    leads: List[LeadInviteModel]
+
 # =========================================================
 # Generate JWT Token
 # =========================================================
@@ -451,7 +950,210 @@ def generate_jwt_token(admin_user_data):
 
     return token
 
+# =========================================================
+# Send UPSC Orientation Invite API
+# =========================================================
 
+@app.post("/campaigns/upsc-orientation/send-invite")
+async def send_upsc_orientation_invite(
+    payload: CampaignInviteRequestModel
+):
+
+    try:
+
+        campaign_recipients = get_collection(
+            "campaign_recipients"
+        )
+
+        whatsapp_message_logs = get_collection(
+            "whatsapp_message_logs"
+        )
+
+        results = []
+
+        for lead in payload.leads:
+
+            name = lead.name.strip()
+            phone = clean_phone_number(lead.phone)
+
+            if not name or not phone:
+
+                results.append(
+                    {
+                        "name": lead.name,
+                        "phone": lead.phone,
+                        "success": False,
+                        "message": "Name and phone are required"
+                    }
+                )
+
+                continue
+
+            # ==========================================
+            # Upsert Campaign Recipient
+            # ==========================================
+
+            campaign_recipients.update_one(
+                {
+                    "phone": phone,
+                    "campaignName": DEFAULT_CAMPAIGN_NAME
+                },
+                {
+                    "$set": {
+                        "name": name,
+                        "phone": phone,
+                        "campaignName": DEFAULT_CAMPAIGN_NAME,
+                        "initialTemplateName": TEMPLATE_INVITE,
+                        "updatedAt": now_utc(),
+                    },
+                    "$setOnInsert": {
+                        "initialTemplateStatus": "PENDING",
+                        "responseLocked": False,
+                        "firstButtonClicked": None,
+                        "buttonPayload": None,
+                        "normalizedResponse": "NO_RESPONSE",
+                        "currentLeadStatus": "INVITE_PENDING",
+                        "followupTemplateToSend": None,
+                        "followupTemplateSent": None,
+                        "followupTemplateStatus": None,
+                        "followupTemplateSentAt": None,
+                        "responseAt": None,
+                        "createdAt": now_utc(),
+                    }
+                },
+                upsert=True
+            )
+
+            # ==========================================
+            # Send WhatsApp Invite Template
+            # ==========================================
+
+            send_result = send_whatsapp_template(
+                phone=phone,
+                template_name=TEMPLATE_INVITE,
+                name=name
+            )
+
+            if send_result.get("success"):
+
+                wa_message_id = None
+
+                try:
+                    wa_message_id = (
+                        send_result
+                        .get("response", {})
+                        .get("messages", [{}])[0]
+                        .get("id")
+                    )
+                except Exception:
+                    wa_message_id = None
+
+                campaign_recipients.update_one(
+                    {
+                        "phone": phone,
+                        "campaignName": DEFAULT_CAMPAIGN_NAME
+                    },
+                    {
+                        "$set": {
+                            "initialTemplateStatus": "SENT",
+                            "initialTemplateSentAt": now_utc(),
+                            "initialWaMessageId": wa_message_id,
+                            "currentLeadStatus": "INVITE_SENT",
+                            "updatedAt": now_utc(),
+                        }
+                    }
+                )
+
+                whatsapp_message_logs.insert_one(
+                    {
+                        "phone": phone,
+                        "name": name,
+                        "campaignName": DEFAULT_CAMPAIGN_NAME,
+                        "direction": "OUTBOUND",
+                        "templateName": TEMPLATE_INVITE,
+                        "waMessageId": wa_message_id,
+                        "status": "SENT",
+                        "apiResponse": send_result.get("response"),
+                        "createdAt": now_utc(),
+                        "updatedAt": now_utc(),
+                    }
+                )
+
+                results.append(
+                    {
+                        "name": name,
+                        "phone": phone,
+                        "success": True,
+                        "message": "Invite sent successfully",
+                        "waMessageId": wa_message_id
+                    }
+                )
+
+            else:
+
+                campaign_recipients.update_one(
+                    {
+                        "phone": phone,
+                        "campaignName": DEFAULT_CAMPAIGN_NAME
+                    },
+                    {
+                        "$set": {
+                            "initialTemplateStatus": "FAILED",
+                            "initialTemplateError": send_result.get("error"),
+                            "initialTemplateApiResponse": send_result.get("response"),
+                            "currentLeadStatus": "INVITE_FAILED",
+                            "updatedAt": now_utc(),
+                        }
+                    }
+                )
+
+                whatsapp_message_logs.insert_one(
+                    {
+                        "phone": phone,
+                        "name": name,
+                        "campaignName": DEFAULT_CAMPAIGN_NAME,
+                        "direction": "OUTBOUND",
+                        "templateName": TEMPLATE_INVITE,
+                        "status": "FAILED",
+                        "error": send_result.get("error"),
+                        "apiResponse": send_result.get("response"),
+                        "createdAt": now_utc(),
+                        "updatedAt": now_utc(),
+                    }
+                )
+
+                results.append(
+                    {
+                        "name": name,
+                        "phone": phone,
+                        "success": False,
+                        "message": "Failed to send invite",
+                        "error": send_result.get("error"),
+                        "apiResponse": send_result.get("response")
+                    }
+                )
+
+        return {
+            "success": True,
+            "campaignName": DEFAULT_CAMPAIGN_NAME,
+            "templateName": TEMPLATE_INVITE,
+            "total": len(payload.leads),
+            "sent": len([r for r in results if r.get("success")]),
+            "failed": len([r for r in results if not r.get("success")]),
+            "results": results
+        }
+
+    except Exception as e:
+
+        logger.exception(
+            "Failed to send UPSC orientation invite: %s",
+            str(e)
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while sending invite"
+        )
 # =========================================================
 # Admin Login API
 # =========================================================
