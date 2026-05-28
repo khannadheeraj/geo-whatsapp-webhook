@@ -7,8 +7,18 @@ from app.api.routes.admin import router as admin_router
 from app.api.routes.whatsapp_webhook import router as whatsapp_webhook_router
 from app.api.routes.campaign import router as campaign_router
 
+from app.config import *
 
-app = FastAPI()
+IS_PRODUCTION = ENVIRONMENT.upper() in ["DEV", "PROD"]
+
+# app = FastAPI()
+
+app = FastAPI(
+    # lifespan=lifespan,
+    docs_url=None if IS_PRODUCTION else "/docs",
+    redoc_url=None if IS_PRODUCTION else "/redoc",
+    openapi_url=None if IS_PRODUCTION else "/openapi.json"
+)
 
 app.add_middleware(
     CORSMiddleware,

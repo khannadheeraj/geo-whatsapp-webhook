@@ -49,3 +49,6 @@ ADMIN_USER_PASSWORD = os.getenv(
 JWT_SECRET_KEY = "geo_whatsapp_secret_key"
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
+
+
+ENVIRONMENT = os.getenv("ENVIRONMENT")
