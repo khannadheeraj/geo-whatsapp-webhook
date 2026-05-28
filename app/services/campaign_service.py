@@ -67,6 +67,8 @@ def process_button_click(event: Dict[str, Any]):
         }
     )
 
+    logger.critical(f"recipient_data======>{recipient}")
+
     if not recipient:
         logger.warning(
             "No campaign recipient found for phone=%s campaign=%s",
@@ -122,6 +124,9 @@ def process_button_click(event: Dict[str, Any]):
             }
         }
     )
+
+
+    logger.critical(f"update_result======>{update_result}")
 
     if update_result.modified_count == 0:
         logger.info(
