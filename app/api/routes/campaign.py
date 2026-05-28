@@ -78,7 +78,7 @@ async def send_upsc_orientation_invite(
                         "followupTemplateStatus": None,
                         "followupTemplateSentAt": None,
                         "responseAt": None,
-                        "creatTime":  int(time.time() * 1000),
+                        "createTime":  int(time.time() * 1000),
                     }
                 },
                 upsert=True
@@ -134,7 +134,7 @@ async def send_upsc_orientation_invite(
                         "waMessageId": wa_message_id,
                         "status": "SENT",
                         "apiResponse": send_result.get("response"),
-                        "creatTime":  int(time.time() * 1000),
+                        "createTime":  int(time.time() * 1000),
                         "updateTime":  int(time.time() * 1000),
                     }
                 )
@@ -177,7 +177,7 @@ async def send_upsc_orientation_invite(
                         "status": "FAILED",
                         "error": send_result.get("error"),
                         "apiResponse": send_result.get("response"),
-                        "creatTime":  int(time.time() * 1000),
+                        "createTime":  int(time.time() * 1000),
                         "updateTime":  int(time.time() * 1000),
                     }
                 )

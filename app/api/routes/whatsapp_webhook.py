@@ -73,7 +73,7 @@ async def receive_whatsapp_webhook(request: Request):
             {
                 "source": "whatsapp",
                 "payload": payload,
-                "creatTime":  int(time.time() * 1000),
+                "createTime":  int(time.time() * 1000),
                 "updateTime":  int(time.time() * 1000),
             }
         )

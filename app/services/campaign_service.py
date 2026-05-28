@@ -92,7 +92,7 @@ def process_button_click(event: Dict[str, Any]):
                 "reason": "response_already_locked",
                 "existingResponse": recipient.get("normalizedResponse"),
                 "rawEvent": event,
-                "creatTime":  int(time.time() * 1000),
+                "createTime":  int(time.time() * 1000),
                 "updateTime":  int(time.time() * 1000),
             }
         )
@@ -176,7 +176,7 @@ def process_button_click(event: Dict[str, Any]):
             "status": "SENT" if template_sent else "FAILED",
             "apiResponse": send_result.get("response"),
             "error": send_result.get("error"),
-            "creatTime":  int(time.time() * 1000),
+            "createTime":  int(time.time() * 1000),
             "updateTime":  int(time.time() * 1000),
         }
     )

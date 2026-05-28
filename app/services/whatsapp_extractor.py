@@ -60,7 +60,7 @@ def extract_whatsapp_events(
                         "displayPhoneNumber": display_phone_number,
                         "rawMessage": message,
                         "rawValue": value,
-                        "creatTime":  int(time.time() * 1000),
+                        "createTime":  int(time.time() * 1000),
                         "updateTime":  int(time.time() * 1000),
                     }
                 )
@@ -81,7 +81,7 @@ def extract_whatsapp_events(
                         "displayPhoneNumber": display_phone_number,
                         "rawStatus": status,
                         "rawValue": value,
-                        "creatTime":  int(time.time() * 1000),
+                        "createTime":  int(time.time() * 1000),
                         "updateTime":  int(time.time() * 1000),
                     }
                 )
