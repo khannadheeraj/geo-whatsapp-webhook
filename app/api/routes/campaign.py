@@ -1,4 +1,5 @@
 import logging
+import time
 
 from fastapi import APIRouter, HTTPException
 
@@ -10,7 +11,7 @@ from app.db.mongodb import get_collection
 from app.schemas.campaign_schema import CampaignInviteRequestModel
 from app.services.whatsapp_sender import send_whatsapp_template
 from app.utils.phone_utils import clean_phone_number
-from app.utils.time_utils import now_utc
+import time
 
 
 logger = logging.getLogger("whatsapp-webhook")
@@ -63,7 +64,7 @@ async def send_upsc_orientation_invite(
                         "phone": phone,
                         "campaignName": DEFAULT_CAMPAIGN_NAME,
                         "initialTemplateName": TEMPLATE_INVITE,
-                        "updatedAt": now_utc(),
+                        "updateTime":  int(time.time() * 1000),
                     },
                     "$setOnInsert": {
                         "initialTemplateStatus": "PENDING",
@@ -77,7 +78,7 @@ async def send_upsc_orientation_invite(
                         "followupTemplateStatus": None,
                         "followupTemplateSentAt": None,
                         "responseAt": None,
-                        "createdAt": now_utc(),
+                        "creatTime":  int(time.time() * 1000),
                     }
                 },
                 upsert=True
@@ -115,10 +116,10 @@ async def send_upsc_orientation_invite(
                     {
                         "$set": {
                             "initialTemplateStatus": "SENT",
-                            "initialTemplateSentAt": now_utc(),
+                            "initialTemplateSentAt":  int(time.time() * 1000),
                             "initialWaMessageId": wa_message_id,
                             "currentLeadStatus": "INVITE_SENT",
-                            "updatedAt": now_utc(),
+                            "updateTime":  int(time.time() * 1000),
                         }
                     }
                 )
@@ -133,8 +134,8 @@ async def send_upsc_orientation_invite(
                         "waMessageId": wa_message_id,
                         "status": "SENT",
                         "apiResponse": send_result.get("response"),
-                        "createdAt": now_utc(),
-                        "updatedAt": now_utc(),
+                        "creatTime":  int(time.time() * 1000),
+                        "updateTime":  int(time.time() * 1000),
                     }
                 )
 
@@ -161,7 +162,7 @@ async def send_upsc_orientation_invite(
                             "initialTemplateError": send_result.get("error"),
                             "initialTemplateApiResponse": send_result.get("response"),
                             "currentLeadStatus": "INVITE_FAILED",
-                            "updatedAt": now_utc(),
+                            "updateTime":  int(time.time() * 1000),
                         }
                     }
                 )
@@ -176,8 +177,8 @@ async def send_upsc_orientation_invite(
                         "status": "FAILED",
                         "error": send_result.get("error"),
                         "apiResponse": send_result.get("response"),
-                        "createdAt": now_utc(),
-                        "updatedAt": now_utc(),
+                        "creatTime":  int(time.time() * 1000),
+                        "updateTime":  int(time.time() * 1000),
                     }
                 )
 

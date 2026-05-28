@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
+# from datetime import datetime, timezone
 
 
-def now_utc():
-    return datetime.now(timezone.utc)
+# # def  int(time.time() * 1000):
+# #     return datetime.now(timezone.utc)

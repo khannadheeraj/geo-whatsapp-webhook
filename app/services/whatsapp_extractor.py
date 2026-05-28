@@ -1,6 +1,6 @@
 from typing import Any, Dict, List
 
-from app.utils.time_utils import now_utc
+import time
 
 
 def extract_whatsapp_events(
@@ -60,8 +60,8 @@ def extract_whatsapp_events(
                         "displayPhoneNumber": display_phone_number,
                         "rawMessage": message,
                         "rawValue": value,
-                        "createdAt": now_utc(),
-                        "updatedAt": now_utc(),
+                        "creatTime":  int(time.time() * 1000),
+                        "updateTime":  int(time.time() * 1000),
                     }
                 )
 
@@ -81,8 +81,8 @@ def extract_whatsapp_events(
                         "displayPhoneNumber": display_phone_number,
                         "rawStatus": status,
                         "rawValue": value,
-                        "createdAt": now_utc(),
-                        "updatedAt": now_utc(),
+                        "creatTime":  int(time.time() * 1000),
+                        "updateTime":  int(time.time() * 1000),
                     }
                 )
 

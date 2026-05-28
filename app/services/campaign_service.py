@@ -8,7 +8,7 @@ from app.config import (
 )
 from app.db.mongodb import get_collection
 from app.services.whatsapp_sender import send_whatsapp_template
-from app.utils.time_utils import now_utc
+import time
 
 
 logger = logging.getLogger("whatsapp-webhook")
@@ -92,8 +92,8 @@ def process_button_click(event: Dict[str, Any]):
                 "reason": "response_already_locked",
                 "existingResponse": recipient.get("normalizedResponse"),
                 "rawEvent": event,
-                "createdAt": now_utc(),
-                "updatedAt": now_utc(),
+                "creatTime":  int(time.time() * 1000),
+                "updateTime":  int(time.time() * 1000),
             }
         )
 
@@ -113,8 +113,8 @@ def process_button_click(event: Dict[str, Any]):
                 "normalizedResponse": button_action["normalizedResponse"],
                 "currentLeadStatus": button_action["leadStatus"],
                 "followupTemplateToSend": button_action["nextTemplate"],
-                "responseAt": now_utc(),
-                "updatedAt": now_utc(),
+                "responseAt":  int(time.time() * 1000),
+                "updateTime":  int(time.time() * 1000),
             }
         }
     )
@@ -153,13 +153,13 @@ def process_button_click(event: Dict[str, Any]):
                     else "FAILED"
                 ),
                 "followupTemplateSentAt": (
-                    now_utc()
+                     int(time.time() * 1000)
                     if template_sent
                     else None
                 ),
                 "followupTemplateApiResponse": send_result.get("response"),
                 "followupTemplateError": send_result.get("error"),
-                "updatedAt": now_utc(),
+                "updateTime":  int(time.time() * 1000),
             }
         }
     )
@@ -176,7 +176,7 @@ def process_button_click(event: Dict[str, Any]):
             "status": "SENT" if template_sent else "FAILED",
             "apiResponse": send_result.get("response"),
             "error": send_result.get("error"),
-            "createdAt": now_utc(),
-            "updatedAt": now_utc(),
+            "creatTime":  int(time.time() * 1000),
+            "updateTime":  int(time.time() * 1000),
         }
     )

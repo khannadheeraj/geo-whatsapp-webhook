@@ -9,7 +9,7 @@ from app.config import WHATSAPP_VERIFY_TOKEN
 from app.db.mongodb import get_collection
 from app.services.whatsapp_extractor import extract_whatsapp_events
 from app.services.campaign_service import process_button_click
-from app.utils.time_utils import now_utc
+import time
 
 
 logger = logging.getLogger("whatsapp-webhook")
@@ -73,8 +73,8 @@ async def receive_whatsapp_webhook(request: Request):
             {
                 "source": "whatsapp",
                 "payload": payload,
-                "createdAt": now_utc(),
-                "updatedAt": now_utc(),
+                "creatTime":  int(time.time() * 1000),
+                "updateTime":  int(time.time() * 1000),
             }
         )
 
