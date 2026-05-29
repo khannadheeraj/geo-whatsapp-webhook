@@ -215,6 +215,8 @@
 #             detail="Something went wrong while sending invite"
 #         )
 
+# ==================================================================================================================================================================================================================================================================================================================================
+
 import logging
 import time
 
@@ -231,7 +233,11 @@ from app.services.whatsapp_sender import send_whatsapp_template
 from app.utils.phone_utils import clean_phone_number
 
 
-logger = logging.getLogger("whatsapp-webhook")
+# logger = logging.getLogger("whatsapp-webhook")
+
+from loguru import logger
+
+
 
 router = APIRouter(
     prefix="/campaigns",
@@ -240,13 +246,9 @@ router = APIRouter(
 
 
 def extract_wa_message_id(send_result: dict):
+    
     try:
-        return (
-            send_result
-            .get("response", {})
-            .get("messages", [{}])[0]
-            .get("id")
-        )
+        return ( send_result .get("response", {}) .get("messages", [{}])[0] .get("id"))
     except Exception:
         return None
 
