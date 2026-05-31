@@ -1,5 +1,4 @@
 from typing import Any, Dict, List
-
 import time
 
 
@@ -46,10 +45,23 @@ def extract_whatsapp_events(
                         button_text = button_reply.get("title")
                         button_payload = button_reply.get("id")
 
+                    elif interactive_type == "list_reply":
+                        list_reply = interactive.get("list_reply", {})
+                        button_text = list_reply.get("title")
+                        button_payload = list_reply.get("id")
+
+                context = message.get("context", {})
+
                 extracted_events.append(
                     {
                         "eventType": "incoming_message",
                         "waMessageId": message.get("id"),
+
+                        # This is important.
+                        # It tells us which outbound WhatsApp message this click belongs to.
+                        "contextMessageId": context.get("id"),
+                        "contextFrom": context.get("from"),
+
                         "from": message.get("from"),
                         "timestamp": message.get("timestamp"),
                         "messageType": message_type,
@@ -60,8 +72,8 @@ def extract_whatsapp_events(
                         "displayPhoneNumber": display_phone_number,
                         "rawMessage": message,
                         "rawValue": value,
-                        "createTime":  int(time.time() * 1000),
-                        "updateTime":  int(time.time() * 1000),
+                        "createTime": int(time.time() * 1000),
+                        "updateTime": int(time.time() * 1000),
                     }
                 )
 
@@ -81,8 +93,8 @@ def extract_whatsapp_events(
                         "displayPhoneNumber": display_phone_number,
                         "rawStatus": status,
                         "rawValue": value,
-                        "createTime":  int(time.time() * 1000),
-                        "updateTime":  int(time.time() * 1000),
+                        "createTime": int(time.time() * 1000),
+                        "updateTime": int(time.time() * 1000),
                     }
                 )
 
