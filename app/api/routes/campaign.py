@@ -466,7 +466,9 @@ async def send_upsc_foundation_admission_open(
         campaign_recipients = get_collection("campaign_recipients")
         whatsapp_message_logs = get_collection("whatsapp_message_logs")
 
+
         results = []
+        campaign_name = payload.campaignName.strip()
 
         for lead in payload.leads:
             now = int(time.time() * 1000)
@@ -488,7 +490,7 @@ async def send_upsc_foundation_admission_open(
             existing_recipient = campaign_recipients.find_one(
                 {
                     "phone": phone,
-                    "campaignName": DEFAULT_CAMPAIGN_NAME
+                    "campaignName": campaign_name
                 }
             )
 
@@ -511,13 +513,13 @@ async def send_upsc_foundation_admission_open(
             campaign_recipients.update_one(
                 {
                     "phone": phone,
-                    "campaignName": DEFAULT_CAMPAIGN_NAME
+                    "campaignName": campaign_name
                 },
                 {
                     "$set": {
                         "name": name,
                         "phone": phone,
-                        "campaignName": DEFAULT_CAMPAIGN_NAME,
+                        "campaignName": campaign_name,
 
                         "foundationAdmissionOpenTemplateName": TEMPLATE_UPSC_FOUNDATION_ADMISSION_OPEN,
                         "foundationAdmissionOpenAdmissionFrom": payload.admissionOpenFrom,
@@ -558,7 +560,7 @@ async def send_upsc_foundation_admission_open(
             campaign_recipients.update_one(
                 {
                     "phone": phone,
-                    "campaignName": DEFAULT_CAMPAIGN_NAME
+                    "campaignName": campaign_name
                 },
                 {
                     "$set": {
@@ -587,7 +589,7 @@ async def send_upsc_foundation_admission_open(
                 {
                     "phone": phone,
                     "name": name,
-                    "campaignName": DEFAULT_CAMPAIGN_NAME,
+                    "campaignName": campaign_name,
                     "direction": "OUTBOUND",
                     "templateName": TEMPLATE_UPSC_FOUNDATION_ADMISSION_OPEN,
                     "messagePurpose": "UPSC_FOUNDATION_ADMISSION_OPEN",
@@ -645,7 +647,7 @@ async def send_upsc_foundation_admission_open(
 
         return {
             "success": True,
-            "campaignName": DEFAULT_CAMPAIGN_NAME,
+            "campaignName": campaign_name,
             "templateName": TEMPLATE_UPSC_FOUNDATION_ADMISSION_OPEN,
             "total": len(payload.leads),
             "sent": sent_count,

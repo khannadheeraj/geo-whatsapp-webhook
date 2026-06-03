@@ -12,6 +12,7 @@ class CampaignInviteRequestModel(BaseModel):
 
 
 class UpscFoundationAdmissionOpenRequestModel(BaseModel):
+    campaignName: str
     admissionOpenFrom: str
     admissionOpenTo: str
     classesStart: str
