@@ -8,9 +8,8 @@ from fastapi.responses import PlainTextResponse
 from app.config import WHATSAPP_VERIFY_TOKEN
 from app.db.mongodb import get_collection
 from app.services.whatsapp_extractor import extract_whatsapp_events
-from app.services.campaign_service import process_button_click
 import time
-
+from app.services.campaign_service import process_button_click, process_text_message
 from loguru import logger
 
 
@@ -107,14 +106,18 @@ async def receive_whatsapp_webhook(request: Request):
             # ==========================================
 
             for event in extracted_events:
+                
 
                 if event.get("eventType") != "incoming_message":
                     continue
 
-                if not event.get("buttonText"):
+                if event.get("buttonText"):
+                    process_button_click(event)
                     continue
 
-                process_button_click(event)
+                if event.get("messageType") == "text" and event.get("text"):
+                    process_text_message(event)
+                    continue
 
         else:
             logger.info("No messages/statuses found in webhook payload.")

@@ -14,6 +14,64 @@ from app.db.mongodb import get_collection
 from app.services.whatsapp_sender import send_whatsapp_template
 
 
+
+
+
+
+
+
+
+
+def process_text_message(event: Dict[str, Any]):
+    phone = event.get("from")
+    text = event.get("text")
+    now = int(time.time() * 1000)
+
+    if not phone or not text:
+        return
+
+    campaign_recipients = get_collection("campaign_recipients")
+    user_text_messages = get_collection("user_text_messages")
+
+    recipient = campaign_recipients.find_one(
+        {
+            "phone": phone,
+            "campaignName": DEFAULT_CAMPAIGN_NAME,
+        }
+    )
+
+    user_text_messages.insert_one(
+        {
+            "phone": phone,
+            "name": recipient.get("name", "") if recipient else "",
+            "campaignName": DEFAULT_CAMPAIGN_NAME,
+            "messageType": "text",
+            "text": text,
+            "waMessageId": event.get("waMessageId"),
+            "contextMessageId": event.get("contextMessageId"),
+            "rawEvent": event,
+            "createTime": now,
+            "updateTime": now,
+        }
+    )
+
+    if recipient:
+        campaign_recipients.update_one(
+            {
+                "_id": recipient["_id"]
+            },
+            {
+                "$set": {
+                    "lastTextMessage": text,
+                    "lastTextMessageAt": now,
+                    "updateTime": now,
+                },
+                "$inc": {
+                    "textMessageCount": 1
+                }
+            }
+        )
+
 def extract_wa_message_id(send_result: Dict[str, Any]):
     try:
         return (
