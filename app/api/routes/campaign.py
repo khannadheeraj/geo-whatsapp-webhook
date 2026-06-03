@@ -7,9 +7,13 @@ from app.config import (
     DEFAULT_CAMPAIGN_NAME,
     TEMPLATE_INVITE,
     TEMPLATE_FINAL_DAY_REMINDER,
+    TEMPLATE_UPSC_FOUNDATION_ADMISSION_OPEN
 )
 from app.db.mongodb import get_collection
-from app.schemas.campaign_schema import CampaignInviteRequestModel
+from app.schemas.campaign_schema import (
+    CampaignInviteRequestModel,
+    UpscFoundationAdmissionOpenRequestModel,
+)
 from app.services.whatsapp_sender import send_whatsapp_template
 from app.utils.phone_utils import clean_phone_number
 
@@ -451,4 +455,212 @@ async def send_final_day_reminder(
         raise HTTPException(
             status_code=500,
             detail="Something went wrong while sending final day reminder"
+        )
+
+
+@router.post("/upsc-foundation/send-admission-open")
+async def send_upsc_foundation_admission_open(
+    payload: UpscFoundationAdmissionOpenRequestModel
+):
+    try:
+        campaign_recipients = get_collection("campaign_recipients")
+        whatsapp_message_logs = get_collection("whatsapp_message_logs")
+
+        results = []
+
+        for lead in payload.leads:
+            now = int(time.time() * 1000)
+
+            name = lead.name.strip()
+            phone = clean_phone_number(lead.phone)
+
+            if not name or not phone:
+                results.append(
+                    {
+                        "name": lead.name,
+                        "phone": lead.phone,
+                        "success": False,
+                        "message": "Name and phone are required"
+                    }
+                )
+                continue
+
+            existing_recipient = campaign_recipients.find_one(
+                {
+                    "phone": phone,
+                    "campaignName": DEFAULT_CAMPAIGN_NAME
+                }
+            )
+
+            if (
+                existing_recipient
+                and existing_recipient.get("foundationAdmissionOpenStatus") == "SENT"
+            ):
+                results.append(
+                    {
+                        "name": name,
+                        "phone": phone,
+                        "success": True,
+                        "skipped": True,
+                        "message": "UPSC foundation admission open template already sent",
+                        "waMessageId": existing_recipient.get("foundationAdmissionOpenWaMessageId")
+                    }
+                )
+                continue
+
+            campaign_recipients.update_one(
+                {
+                    "phone": phone,
+                    "campaignName": DEFAULT_CAMPAIGN_NAME
+                },
+                {
+                    "$set": {
+                        "name": name,
+                        "phone": phone,
+                        "campaignName": DEFAULT_CAMPAIGN_NAME,
+
+                        "foundationAdmissionOpenTemplateName": TEMPLATE_UPSC_FOUNDATION_ADMISSION_OPEN,
+                        "foundationAdmissionOpenAdmissionFrom": payload.admissionOpenFrom,
+                        "foundationAdmissionOpenAdmissionTo": payload.admissionOpenTo,
+                        "foundationAdmissionOpenClassesStart": payload.classesStart,
+
+                        "updateTime": now,
+                    },
+                    "$setOnInsert": {
+                        "responseLocked": False,
+                        "firstButtonClicked": None,
+                        "buttonPayload": None,
+                        "normalizedResponse": "NO_RESPONSE",
+                        "currentLeadStatus": "UPSC_FOUNDATION_ADMISSION_OPEN_PENDING",
+                        "responseAt": None,
+                        "createTime": now,
+                    }
+                },
+                upsert=True
+            )
+
+            send_result = send_whatsapp_template(
+                phone=phone,
+                template_name=TEMPLATE_UPSC_FOUNDATION_ADMISSION_OPEN,
+                body_parameters=[
+                    name,
+                    payload.admissionOpenFrom,
+                    payload.admissionOpenTo,
+                    payload.classesStart,
+                ]
+            )
+
+            template_sent = bool(send_result.get("success"))
+            wa_message_id = extract_wa_message_id(send_result)
+
+            now = int(time.time() * 1000)
+
+            campaign_recipients.update_one(
+                {
+                    "phone": phone,
+                    "campaignName": DEFAULT_CAMPAIGN_NAME
+                },
+                {
+                    "$set": {
+                        "foundationAdmissionOpenStatus": "SENT" if template_sent else "FAILED",
+                        "foundationAdmissionOpenSentAt": now if template_sent else None,
+                        "foundationAdmissionOpenWaMessageId": wa_message_id,
+                        "foundationAdmissionOpenError": None if template_sent else send_result.get("error"),
+                        "foundationAdmissionOpenApiResponse": send_result.get("response"),
+
+                        "foundationAdmissionOpenTalkCounselorClicked": False,
+                        "foundationAdmissionOpenTalkCounselorClickedAt": None,
+                        "foundationAdmissionOpenTalkCounselorButtonText": None,
+                        "foundationAdmissionOpenTalkCounselorButtonPayload": None,
+
+                        "currentLeadStatus": (
+                            "UPSC_FOUNDATION_ADMISSION_OPEN_SENT"
+                            if template_sent
+                            else "UPSC_FOUNDATION_ADMISSION_OPEN_FAILED"
+                        ),
+                        "updateTime": now,
+                    }
+                }
+            )
+
+            whatsapp_message_logs.insert_one(
+                {
+                    "phone": phone,
+                    "name": name,
+                    "campaignName": DEFAULT_CAMPAIGN_NAME,
+                    "direction": "OUTBOUND",
+                    "templateName": TEMPLATE_UPSC_FOUNDATION_ADMISSION_OPEN,
+                    "messagePurpose": "UPSC_FOUNDATION_ADMISSION_OPEN",
+                    "waMessageId": wa_message_id,
+                    "status": "SENT" if template_sent else "FAILED",
+                    "apiResponse": send_result.get("response"),
+                    "error": send_result.get("error"),
+                    "templateVariables": {
+                        "name": name,
+                        "admissionOpenFrom": payload.admissionOpenFrom,
+                        "admissionOpenTo": payload.admissionOpenTo,
+                        "classesStart": payload.classesStart,
+                    },
+                    "createTime": now,
+                    "updateTime": now,
+                }
+            )
+
+            results.append(
+                {
+                    "name": name,
+                    "phone": phone,
+                    "success": template_sent,
+                    "message": (
+                        "UPSC foundation admission open template sent"
+                        if template_sent
+                        else "UPSC foundation admission open template failed"
+                    ),
+                    "waMessageId": wa_message_id,
+                    "error": send_result.get("error"),
+                    "apiResponse": send_result.get("response"),
+                }
+            )
+
+        sent_count = len(
+            [
+                r for r in results
+                if r.get("success") and not r.get("skipped")
+            ]
+        )
+
+        skipped_count = len(
+            [
+                r for r in results
+                if r.get("skipped")
+            ]
+        )
+
+        failed_count = len(
+            [
+                r for r in results
+                if not r.get("success")
+            ]
+        )
+
+        return {
+            "success": True,
+            "campaignName": DEFAULT_CAMPAIGN_NAME,
+            "templateName": TEMPLATE_UPSC_FOUNDATION_ADMISSION_OPEN,
+            "total": len(payload.leads),
+            "sent": sent_count,
+            "skipped": skipped_count,
+            "failed": failed_count,
+            "results": results
+        }
+
+    except Exception as e:
+        logger.exception(
+            "Failed to send UPSC foundation admission open template: %s",
+            str(e)
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while sending UPSC foundation admission open template"
         )

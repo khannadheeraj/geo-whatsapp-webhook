@@ -9,3 +9,10 @@ class LeadInviteModel(BaseModel):
 
 class CampaignInviteRequestModel(BaseModel):
     leads: List[LeadInviteModel]
+
+
+class UpscFoundationAdmissionOpenRequestModel(BaseModel):
+    admissionOpenFrom: str
+    admissionOpenTo: str
+    classesStart: str
+    leads: List[LeadInviteModel]

@@ -1,4 +1,6 @@
 import logging
+from typing import List, Optional
+
 import requests
 
 from app.config import (
@@ -14,9 +16,9 @@ logger = logging.getLogger("whatsapp-webhook")
 def send_whatsapp_template(
     phone: str,
     template_name: str,
-    name: str = ""
+    name: str = "",
+    body_parameters: Optional[List[str]] = None
 ):
-
     if not WHATSAPP_ACCESS_TOKEN:
         logger.error("WHATSAPP_ACCESS_TOKEN is not configured.")
         return {
@@ -44,8 +46,6 @@ def send_whatsapp_template(
         "Content-Type": "application/json",
     }
 
-    variable_name = name.strip() if name else "there"
-
     payload = {
         "messaging_product": "whatsapp",
         "to": phone,
@@ -54,20 +54,31 @@ def send_whatsapp_template(
             "name": template_name,
             "language": {
                 "code": TEMPLATE_LANGUAGE_CODE
-            },
-            "components": [
-                {
-                    "type": "body",
-                    "parameters": [
-                        {
-                            "type": "text",
-                            "text": variable_name
-                        }
-                    ]
-                }
-            ]
+            }
         }
     }
+
+    # Backward compatibility:
+    # Old templates use only name as {{1}}
+    if body_parameters is None:
+        if name:
+            body_parameters = [name.strip()]
+        else:
+            body_parameters = []
+
+    if body_parameters:
+        payload["template"]["components"] = [
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": str(value)
+                    }
+                    for value in body_parameters
+                ]
+            }
+        ]
 
     try:
         response = requests.post(

@@ -31,6 +31,7 @@ WHATSAPP_GRAPH_API_VERSION = "v20.0"
 TEMPLATE_LANGUAGE_CODE = "en_US"
 
 DEFAULT_CAMPAIGN_NAME = "upsc_orientation_may31"
+TEMPLATE_UPSC_FOUNDATION_ADMISSION_OPEN = "upsc_foundation_admission_open"
 
 TEMPLATE_INVITE = "upsc_orientation_invite_may31"
 
