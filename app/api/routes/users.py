@@ -1,7 +1,7 @@
 import time
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.db.mongodb import get_collection
 from app.schemas.user_schema import BulkUserUploadRequestModel
@@ -13,6 +13,75 @@ router = APIRouter(
     prefix="/users",
     tags=["Users"]
 )
+
+
+@router.get("/all")
+async def get_users(
+    page: int = Query(1, ge=1, description="Page number starting from 1"),
+    pageSize: int = Query(10, ge=1, le=100, description="Number of users per page"),
+    search: str = Query("", description="Search by username or phone number"),
+):
+    try:
+        user_collection = get_collection("users")
+
+        # Build search filter
+        search_filter = {}
+        if search.strip():
+            search_filter = {
+                "$or": [
+                    {"username": {"$regex": search.strip(), "$options": "i"}},
+                    {"phoneNumber": {"$regex": search.strip(), "$options": "i"}},
+                    {"normalizedPhone": {"$regex": search.strip(), "$options": "i"}},
+                ]
+            }
+
+        total_count = user_collection.count_documents(search_filter)
+
+        skip = (page - 1) * pageSize
+        limit = pageSize
+
+        users = list(
+            user_collection.find(search_filter)
+            .sort("createTime", -1)
+            .skip(skip)
+            .limit(limit)
+        )
+
+        total_pages = (total_count + pageSize - 1) // pageSize
+
+        formatted_users = []
+        for user in users:
+            formatted_users.append(
+                {
+                    "id": str(user.get("_id")),
+                    "username": user.get("username"),
+                    "phoneNumber": user.get("phoneNumber"),
+                    "normalizedPhone": user.get("normalizedPhone"),
+                    "createTime": user.get("createTime"),
+                    "updateTime": user.get("updateTime"),
+                }
+            )
+
+        return {
+            "success": True,
+            "data": formatted_users,
+            "pagination": {
+                "page": page,
+                "pageSize": pageSize,
+                "totalRecords": total_count,
+                "totalPages": total_pages,
+                "hasNextPage": page < total_pages,
+                "hasPrevPage": page > 1,
+            },
+            "searchQuery": search.strip() if search.strip() else None
+        }
+
+    except Exception as e:
+        logger.exception("Failed to fetch users: %s", str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while fetching users"
+        )
 
 
 @router.post("/bulk-upload")
