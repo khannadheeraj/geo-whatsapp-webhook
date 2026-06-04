@@ -8,6 +8,7 @@ from app.api.routes.whatsapp_webhook import router as whatsapp_webhook_router
 from app.api.routes.campaign import router as campaign_router
 from app.api.routes.analytics_router import router as analytics_router
 from app.api.routes.users import router as users_router
+from app.api.routes.template import router as template_router
 
 from app.config import *
 
@@ -47,3 +48,4 @@ app.include_router(whatsapp_webhook_router)
 app.include_router(campaign_router)
 app.include_router(analytics_router)
 app.include_router(users_router)
+app.include_router(template_router)

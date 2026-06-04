@@ -26,12 +26,26 @@ WHATSAPP_PHONE_NUMBER_ID = os.getenv(
     ""
 ).strip()
 
+WHATSAPP_WABA_ID = os.getenv(
+    "WHATSAPP_WABA_ID",
+    ""
+).strip()
+
 WHATSAPP_GRAPH_API_VERSION = "v20.0"
 
 TEMPLATE_LANGUAGE_CODE = "en_US"
 
 DEFAULT_CAMPAIGN_NAME = "upsc_orientation_may31"
+UPSC_ORIENTATION_MAY31_END_DATE = os.getenv(
+    "UPSC_ORIENTATION_MAY31_END_DATE",
+    "2026-05-31"
+).strip()
+
 TEMPLATE_UPSC_FOUNDATION_ADMISSION_OPEN = "upsc_foundation_admission_open"
+TEMPLATE_UPSC_FOUNDATION_ADMISSION_OPEN_END_DATE = os.getenv(
+    "TEMPLATE_UPSC_FOUNDATION_ADMISSION_OPEN_END_DATE",
+    ""
+).strip()
 
 TEMPLATE_INVITE = "upsc_orientation_invite_may31"
 
