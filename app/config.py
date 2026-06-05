@@ -56,6 +56,9 @@ TEMPLATE_FINAL_DAY_REMINDER = "appointment_reminder_2"
 TEMPLATE_SEAT_CONFIRMED = "upsc_orientation_seat_confirmed_may31"
 TEMPLATE_COUNSELLING = "upsc_orientation_counselling_31st"
 
+SCHOLARSHIP_MOCK_TEST_CAMPAIGN_NAME = "upsc_scholarship_mock_test_7_june"
+TEMPLATE_SCHOLARSHIP_MOCK_TEST = "upsc_scholarship_mock_test_invitation"
+
 ADMIN_USER_EMAIL = os.getenv(
     "ADMIN_USER_EMAIL",
     "admin@gmail.com"

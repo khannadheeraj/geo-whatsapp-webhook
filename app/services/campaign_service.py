@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import time
 
 from loguru import logger
@@ -9,68 +9,16 @@ from app.config import (
     TEMPLATE_SEAT_CONFIRMED,
     TEMPLATE_COUNSELLING,
     TEMPLATE_FINAL_DAY_REMINDER,
+    SCHOLARSHIP_MOCK_TEST_CAMPAIGN_NAME,
+    TEMPLATE_SCHOLARSHIP_MOCK_TEST,
 )
 from app.db.mongodb import get_collection
 from app.services.whatsapp_sender import send_whatsapp_template
 
 
-
-
-
-
-
-
-
-
-def process_text_message(event: Dict[str, Any]):
-    phone = event.get("from")
-    text = event.get("text")
-    now = int(time.time() * 1000)
-
-    if not phone or not text:
-        return
-
-    campaign_recipients = get_collection("campaign_recipients")
-    user_text_messages = get_collection("user_text_messages")
-
-    recipient = campaign_recipients.find_one(
-        {
-            "phone": phone,
-            "campaignName": DEFAULT_CAMPAIGN_NAME,
-        }
-    )
-
-    user_text_messages.insert_one(
-        {
-            "phone": phone,
-            "name": recipient.get("name", "") if recipient else "",
-            "campaignName": DEFAULT_CAMPAIGN_NAME,
-            "messageType": "text",
-            "text": text,
-            "waMessageId": event.get("waMessageId"),
-            "contextMessageId": event.get("contextMessageId"),
-            "rawEvent": event,
-            "createTime": now,
-            "updateTime": now,
-        }
-    )
-
-    if recipient:
-        campaign_recipients.update_one(
-            {
-                "_id": recipient["_id"]
-            },
-            {
-                "$set": {
-                    "lastTextMessage": text,
-                    "lastTextMessageAt": now,
-                    "updateTime": now,
-                },
-                "$inc": {
-                    "textMessageCount": 1
-                }
-            }
-        )
+# =========================================================
+# Common Helpers
+# =========================================================
 
 def extract_wa_message_id(send_result: Dict[str, Any]):
     try:
@@ -84,20 +32,97 @@ def extract_wa_message_id(send_result: Dict[str, Any]):
         return None
 
 
-def normalize_button_response(button_text: str):
-    if not button_text:
+def get_outbound_log_for_context(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    WhatsApp button/text reply usually contains:
+        context.id = outbound message id
+
+    We use that contextMessageId to find the original outbound message
+    from whatsapp_message_logs.
+
+    This tells us:
+        - which campaign the reply belongs to
+        - which template was replied to
+        - what purpose that message had
+    """
+
+    context_message_id = event.get("contextMessageId")
+
+    if not context_message_id:
         return None
 
-    cleaned_button_text = button_text.strip().lower()
+    whatsapp_message_logs = get_collection("whatsapp_message_logs")
 
-    if cleaned_button_text == "yes, i will attend":
+    return whatsapp_message_logs.find_one(
+        {
+            "waMessageId": context_message_id
+        }
+    )
+
+
+def find_recipient_by_campaign(
+    phone: str,
+    campaign_name: str
+):
+    campaign_recipients = get_collection("campaign_recipients")
+
+    return campaign_recipients.find_one(
+        {
+            "phone": phone,
+            "campaignName": campaign_name,
+        }
+    )
+
+
+# =========================================================
+# Old Orientation Campaign Button Normalization
+# =========================================================
+
+def normalize_button_response(
+    button_text: str = "",
+    button_payload: str = ""
+):
+    cleaned_button_text = (button_text or "").strip().lower()
+    cleaned_button_payload = (button_payload or "").strip().lower()
+
+    if (
+        cleaned_button_text in [
+            "yes, i will attend",
+            "yes i will attend",
+            "yes, i'll attend",
+            "yes i'll attend",
+            "yes",
+        ]
+        or cleaned_button_payload in [
+            "yes_attend",
+            "yes_i_will_attend",
+            "yes-i-will-attend",
+            "yes, i will attend",
+            "yes i will attend",
+        ]
+    ):
         return {
             "normalizedResponse": "YES_ATTEND",
             "leadStatus": "SEAT_CONFIRMED",
             "nextTemplate": TEMPLATE_SEAT_CONFIRMED,
         }
 
-    if cleaned_button_text == "talk to counselor":
+    if (
+        cleaned_button_text in [
+            "talk to counselor",
+            "talk to counsellor",
+            "talk counselor",
+            "talk counsellor",
+        ]
+        or cleaned_button_payload in [
+            "talk_to_counselor",
+            "talk_to_counsellor",
+            "talk-counselor",
+            "talk-counsellor",
+            "talk to counselor",
+            "talk to counsellor",
+        ]
+    ):
         return {
             "normalizedResponse": "TALK_COUNSELOR",
             "leadStatus": "COUNSELLOR_REQUESTED",
@@ -106,6 +131,15 @@ def normalize_button_response(button_text: str):
 
     return None
 
+
+# =========================================================
+# Final Day Reminder Button Normalization
+# appointment_reminder_2
+# Buttons:
+#   Know More
+#   Call Now
+#   Get Location
+# =========================================================
 
 def normalize_final_day_button(
     button_text: str = "",
@@ -159,33 +193,76 @@ def normalize_final_day_button(
     return None
 
 
-def get_outbound_log_for_context(event: Dict[str, Any]):
-    context_message_id = event.get("contextMessageId")
+# =========================================================
+# Scholarship Mock Test Button Normalization
+# Template: upsc_scholarship_mock_test_invitation
+# Buttons:
+#   Interested
+#   Location
+#   Talk with Management
+# =========================================================
 
-    if not context_message_id:
-        return None
+def normalize_scholarship_button(
+    button_text: str = "",
+    button_payload: str = ""
+):
+    cleaned_text = (button_text or "").strip().lower()
+    cleaned_payload = (button_payload or "").strip().lower()
 
-    whatsapp_message_logs = get_collection("whatsapp_message_logs")
-
-    return whatsapp_message_logs.find_one(
-        {
-            "waMessageId": context_message_id
+    if (
+        cleaned_text == "interested"
+        or cleaned_payload in [
+            "interested",
+            "scholarship_interested",
+        ]
+    ):
+        return {
+            "action": "SCHOLARSHIP_INTERESTED",
+            "buttonLabel": "Interested"
         }
-    )
+
+    if (
+        cleaned_text == "location"
+        or cleaned_payload in [
+            "location",
+            "scholarship_location",
+            "get location",
+            "get_location",
+        ]
+    ):
+        return {
+            "action": "SCHOLARSHIP_LOCATION_REQUESTED",
+            "buttonLabel": "Location"
+        }
+
+    if (
+        cleaned_text == "talk with management"
+        or cleaned_payload in [
+            "talk with management",
+            "talk_with_management",
+            "management",
+            "talk management",
+        ]
+    ):
+        return {
+            "action": "SCHOLARSHIP_MANAGEMENT_REQUESTED",
+            "buttonLabel": "Talk with Management"
+        }
+
+    return None
 
 
-def is_final_day_reminder_click(event: Dict[str, Any]) -> bool:
-    outbound_log = get_outbound_log_for_context(event)
-
-    if not outbound_log:
-        return False
-
-    return outbound_log.get("messagePurpose") == "FINAL_DAY_UTILITY_REMINDER"
-
+# =========================================================
+# Final Day Reminder Click Processor
+# Allows all 3 buttons.
+# Does NOT use responseLocked.
+# Know More sends marketing invite again.
+# =========================================================
 
 def process_final_day_reminder_click(
     event: Dict[str, Any],
-    recipient: Dict[str, Any]
+    recipient: Dict[str, Any],
+    outbound_log: Optional[Dict[str, Any]] = None
 ):
     phone = event.get("from")
     button_text = event.get("buttonText")
@@ -213,8 +290,11 @@ def process_final_day_reminder_click(
     reminder_button_clicks = get_collection("reminder_button_clicks")
     whatsapp_message_logs = get_collection("whatsapp_message_logs")
 
-    outbound_log = get_outbound_log_for_context(event)
+    if outbound_log is None:
+        outbound_log = get_outbound_log_for_context(event)
 
+    # Store every click separately.
+    # User may click Know More + Call Now + Get Location.
     reminder_button_clicks.insert_one(
         {
             "phone": phone,
@@ -256,6 +336,7 @@ def process_final_day_reminder_click(
         }
     )
 
+    # Know More sends marketing invite again.
     if final_day_action["action"] == "KNOW_MORE":
         send_result = send_whatsapp_template(
             phone=phone,
@@ -265,7 +346,6 @@ def process_final_day_reminder_click(
 
         marketing_sent = bool(send_result.get("success"))
         retry_wa_message_id = extract_wa_message_id(send_result)
-
         now = int(time.time() * 1000)
 
         campaign_recipients.update_one(
@@ -304,6 +384,177 @@ def process_final_day_reminder_click(
         )
 
 
+# =========================================================
+# Scholarship Mock Test Click Processor
+# Allows all 3 buttons.
+# Does NOT use responseLocked.
+# Tracks every click in scholarship_button_clicks.
+# =========================================================
+
+def process_scholarship_button_click(
+    event: Dict[str, Any],
+    recipient: Dict[str, Any],
+    outbound_log: Optional[Dict[str, Any]] = None
+):
+    phone = event.get("from")
+    button_text = event.get("buttonText")
+    button_payload = event.get("buttonPayload")
+    now = int(time.time() * 1000)
+
+    if not phone or not (button_text or button_payload):
+        return
+
+    scholarship_action = normalize_scholarship_button(
+        button_text=button_text,
+        button_payload=button_payload
+    )
+
+    if not scholarship_action:
+        logger.info(
+            "Unknown scholarship button | phone={} buttonText={} buttonPayload={}",
+            phone,
+            button_text,
+            button_payload
+        )
+        return
+
+    campaign_recipients = get_collection("campaign_recipients")
+    scholarship_button_clicks = get_collection("scholarship_button_clicks")
+
+    if outbound_log is None:
+        outbound_log = get_outbound_log_for_context(event)
+
+    scholarship_button_clicks.insert_one(
+        {
+            "phone": phone,
+            "name": recipient.get("name", ""),
+            "campaignName": SCHOLARSHIP_MOCK_TEST_CAMPAIGN_NAME,
+            "templateName": TEMPLATE_SCHOLARSHIP_MOCK_TEST,
+            "messagePurpose": "SCHOLARSHIP_MOCK_TEST_INVITE",
+            "buttonText": button_text,
+            "buttonPayload": button_payload,
+            "normalizedAction": scholarship_action["action"],
+            "buttonLabel": scholarship_action["buttonLabel"],
+            "contextMessageId": event.get("contextMessageId"),
+            "outboundLogId": outbound_log.get("_id") if outbound_log else None,
+            "waMessageId": event.get("waMessageId"),
+            "rawEvent": event,
+            "createTime": now,
+            "updateTime": now,
+        }
+    )
+
+    campaign_recipients.update_one(
+        {
+            "_id": recipient["_id"]
+        },
+        {
+            "$set": {
+                "scholarshipLastClickedButton": scholarship_action["buttonLabel"],
+                "scholarshipLastClickedAction": scholarship_action["action"],
+                "scholarshipLastClickedAt": now,
+                "currentLeadStatus": scholarship_action["action"],
+                "updateTime": now,
+            },
+            "$addToSet": {
+                "scholarshipClickedButtons": scholarship_action["buttonLabel"],
+                "scholarshipClickedActions": scholarship_action["action"],
+            },
+            "$inc": {
+                "scholarshipClickCount": 1
+            }
+        }
+    )
+
+
+# =========================================================
+# Text Message Processor
+# Stores typed user messages.
+# Uses contextMessageId to attach text to correct campaign/template.
+# =========================================================
+
+def process_text_message(event: Dict[str, Any]):
+    phone = event.get("from")
+    text = event.get("text")
+    now = int(time.time() * 1000)
+
+    if not phone or not text:
+        return
+
+    outbound_log = get_outbound_log_for_context(event)
+
+    campaign_name = (
+        outbound_log.get("campaignName")
+        if outbound_log
+        else DEFAULT_CAMPAIGN_NAME
+    )
+
+    template_name = (
+        outbound_log.get("templateName")
+        if outbound_log
+        else None
+    )
+
+    message_purpose = (
+        outbound_log.get("messagePurpose")
+        if outbound_log
+        else None
+    )
+
+    campaign_recipients = get_collection("campaign_recipients")
+    user_text_messages = get_collection("user_text_messages")
+
+    recipient = campaign_recipients.find_one(
+        {
+            "phone": phone,
+            "campaignName": campaign_name,
+        }
+    )
+
+    user_text_messages.insert_one(
+        {
+            "phone": phone,
+            "name": recipient.get("name", "") if recipient else "",
+            "campaignName": campaign_name,
+            "templateName": template_name,
+            "messagePurpose": message_purpose,
+            "messageType": "text",
+            "text": text,
+            "waMessageId": event.get("waMessageId"),
+            "contextMessageId": event.get("contextMessageId"),
+            "contextFrom": event.get("contextFrom"),
+            "rawEvent": event,
+            "createTime": now,
+            "updateTime": now,
+        }
+    )
+
+    if recipient:
+        campaign_recipients.update_one(
+            {
+                "_id": recipient["_id"]
+            },
+            {
+                "$set": {
+                    "lastTextMessage": text,
+                    "lastTextMessageAt": now,
+                    "lastTextMessageCampaignName": campaign_name,
+                    "lastTextMessageTemplateName": template_name,
+                    "lastTextMessagePurpose": message_purpose,
+                    "updateTime": now,
+                },
+                "$inc": {
+                    "textMessageCount": 1
+                }
+            }
+        )
+
+
+# =========================================================
+# Main Button Router
+# This routes button clicks based on contextMessageId.
+# =========================================================
+
 def process_button_click(event: Dict[str, Any]):
     phone = event.get("from")
     button_text = event.get("buttonText")
@@ -312,40 +563,87 @@ def process_button_click(event: Dict[str, Any]):
     if not phone or not (button_text or button_payload):
         return
 
+    outbound_log = get_outbound_log_for_context(event)
+
+    campaign_name = (
+        outbound_log.get("campaignName")
+        if outbound_log
+        else DEFAULT_CAMPAIGN_NAME
+    )
+
+    message_purpose = (
+        outbound_log.get("messagePurpose")
+        if outbound_log
+        else None
+    )
+
     campaign_recipients = get_collection("campaign_recipients")
 
     recipient = campaign_recipients.find_one(
         {
             "phone": phone,
-            "campaignName": DEFAULT_CAMPAIGN_NAME,
+            "campaignName": campaign_name,
         }
     )
 
-    logger.critical(f"recipient_data======>{recipient}")
+    logger.critical(
+        "BUTTON_CLICK | phone={} campaign={} buttonText={} buttonPayload={} purpose={} recipient_found={}",
+        phone,
+        campaign_name,
+        button_text,
+        button_payload,
+        message_purpose,
+        recipient is not None
+    )
 
     if not recipient:
         logger.warning(
             "No campaign recipient found for phone={} campaign={}",
             phone,
-            DEFAULT_CAMPAIGN_NAME
+            campaign_name
         )
         return
 
     # ==================================================
-    # Final-day reminder buttons:
-    # Know More, Call Now, Get Location
-    #
-    # These should NOT use responseLocked.
-    # User can click all 3 buttons.
+    # Scholarship Mock Test Campaign
+    # Interested / Location / Talk with Management
+    # No lock. Track every click.
     # ==================================================
 
-    if is_final_day_reminder_click(event):
-        process_final_day_reminder_click(event, recipient)
+    if message_purpose == "SCHOLARSHIP_MOCK_TEST_INVITE":
+        process_scholarship_button_click(
+            event=event,
+            recipient=recipient,
+            outbound_log=outbound_log
+        )
         return
 
-    button_action = normalize_button_response(button_text)
+    # ==================================================
+    # Final Day Reminder Campaign
+    # Know More / Call Now / Get Location
+    # No lock. Track every click.
+    # ==================================================
 
-    logger.critical(f"button_action======>{button_action}")
+    if message_purpose == "FINAL_DAY_UTILITY_REMINDER":
+        process_final_day_reminder_click(
+            event=event,
+            recipient=recipient,
+            outbound_log=outbound_log
+        )
+        return
+
+    # ==================================================
+    # Old Orientation Invite Campaign
+    # Yes, I will attend / Talk to Counselor
+    # First click wins.
+    # ==================================================
+
+    button_action = normalize_button_response(
+        button_text=button_text,
+        button_payload=button_payload
+    )
+
+    logger.critical("button_action======>{}", button_action)
 
     if not button_action:
         logger.info(
@@ -356,8 +654,6 @@ def process_button_click(event: Dict[str, Any]):
         )
         return
 
-    # First click wins for old marketing invite final-response buttons.
-    # This does NOT apply to final-day reminder buttons above.
     if recipient.get("responseLocked") is True:
         logger.info(
             "Response already locked. Ignoring button click | phone={} button={} existingResponse={}",
@@ -371,7 +667,7 @@ def process_button_click(event: Dict[str, Any]):
         ignored_clicks.insert_one(
             {
                 "phone": phone,
-                "campaignName": DEFAULT_CAMPAIGN_NAME,
+                "campaignName": campaign_name,
                 "buttonText": button_text,
                 "buttonPayload": button_payload,
                 "reason": "response_already_locked",
@@ -405,7 +701,7 @@ def process_button_click(event: Dict[str, Any]):
         }
     )
 
-    logger.critical(f"update_result======>{update_result}")
+    logger.critical("update_result======>{}", update_result)
 
     if update_result.modified_count == 0:
         logger.info(
@@ -423,6 +719,9 @@ def process_button_click(event: Dict[str, Any]):
     )
 
     template_sent = bool(send_result.get("success"))
+    followup_wa_message_id = extract_wa_message_id(send_result)
+
+    now = int(time.time() * 1000)
 
     campaign_recipients.update_one(
         {
@@ -441,13 +740,14 @@ def process_button_click(event: Dict[str, Any]):
                     else "FAILED"
                 ),
                 "followupTemplateSentAt": (
-                    int(time.time() * 1000)
+                    now
                     if template_sent
                     else None
                 ),
+                "followupTemplateWaMessageId": followup_wa_message_id,
                 "followupTemplateApiResponse": send_result.get("response"),
                 "followupTemplateError": send_result.get("error"),
-                "updateTime": int(time.time() * 1000),
+                "updateTime": now,
             }
         }
     )
@@ -458,14 +758,15 @@ def process_button_click(event: Dict[str, Any]):
         {
             "phone": phone,
             "name": lead_name,
-            "campaignName": DEFAULT_CAMPAIGN_NAME,
+            "campaignName": campaign_name,
             "direction": "OUTBOUND",
             "templateName": button_action["nextTemplate"],
             "messagePurpose": "FINAL_RESPONSE_FOLLOWUP",
+            "waMessageId": followup_wa_message_id,
             "status": "SENT" if template_sent else "FAILED",
             "apiResponse": send_result.get("response"),
             "error": send_result.get("error"),
-            "createTime": int(time.time() * 1000),
-            "updateTime": int(time.time() * 1000),
+            "createTime": now,
+            "updateTime": now,
         }
     )

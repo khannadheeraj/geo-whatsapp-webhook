@@ -7,7 +7,8 @@ from app.config import (
     DEFAULT_CAMPAIGN_NAME,
     TEMPLATE_INVITE,
     TEMPLATE_FINAL_DAY_REMINDER,
-    TEMPLATE_UPSC_FOUNDATION_ADMISSION_OPEN
+    SCHOLARSHIP_MOCK_TEST_CAMPAIGN_NAME,
+    TEMPLATE_SCHOLARSHIP_MOCK_TEST,
 )
 from app.db.mongodb import get_collection
 from app.schemas.campaign_schema import (
@@ -665,4 +666,157 @@ async def send_upsc_foundation_admission_open(
         raise HTTPException(
             status_code=500,
             detail="Something went wrong while sending UPSC foundation admission open template"
+        )
+
+
+@router.post("/upsc-scholarship-mock-test/send-invite")
+async def send_scholarship_mock_test_invite(
+    payload: CampaignInviteRequestModel
+):
+    try:
+        campaign_recipients = get_collection("campaign_recipients")
+        whatsapp_message_logs = get_collection("whatsapp_message_logs")
+
+        results = []
+
+        for lead in payload.leads:
+            now = int(time.time() * 1000)
+
+            name = lead.name.strip()
+            phone = clean_phone_number(lead.phone)
+
+            if not name or not phone:
+                results.append(
+                    {
+                        "name": lead.name,
+                        "phone": lead.phone,
+                        "success": False,
+                        "message": "Name and phone are required"
+                    }
+                )
+                continue
+
+            campaign_recipients.update_one(
+                {
+                    "phone": phone,
+                    "campaignName": SCHOLARSHIP_MOCK_TEST_CAMPAIGN_NAME
+                },
+                {
+                    "$set": {
+                        "name": name,
+                        "phone": phone,
+                        "campaignName": SCHOLARSHIP_MOCK_TEST_CAMPAIGN_NAME,
+                        "scholarshipTemplateName": TEMPLATE_SCHOLARSHIP_MOCK_TEST,
+                        "updateTime": now,
+                    },
+                    "$setOnInsert": {
+                        "scholarshipInviteStatus": "PENDING",
+                        "currentLeadStatus": "SCHOLARSHIP_INVITE_PENDING",
+
+                        "scholarshipClickedButtons": [],
+                        "scholarshipClickedActions": [],
+                        "scholarshipClickCount": 0,
+                        "scholarshipLastClickedButton": None,
+                        "scholarshipLastClickedAction": None,
+                        "scholarshipLastClickedAt": None,
+
+                        "lastTextMessage": None,
+                        "lastTextMessageAt": None,
+                        "textMessageCount": 0,
+
+                        "createTime": now,
+                    }
+                },
+                upsert=True
+            )
+
+            # Template has 1 variable: {{1}} = name / Aspirant
+            send_result = send_whatsapp_template(
+                phone=phone,
+                template_name=TEMPLATE_SCHOLARSHIP_MOCK_TEST,
+                name=name
+            )
+
+            invite_sent = bool(send_result.get("success"))
+            wa_message_id = extract_wa_message_id(send_result)
+
+            now = int(time.time() * 1000)
+
+            campaign_recipients.update_one(
+                {
+                    "phone": phone,
+                    "campaignName": SCHOLARSHIP_MOCK_TEST_CAMPAIGN_NAME
+                },
+                {
+                    "$set": {
+                        "scholarshipInviteStatus": "SENT" if invite_sent else "FAILED",
+                        "scholarshipInviteSentAt": now if invite_sent else None,
+                        "scholarshipInviteWaMessageId": wa_message_id,
+                        "scholarshipInviteError": None if invite_sent else send_result.get("error"),
+                        "scholarshipInviteApiResponse": send_result.get("response"),
+                        "currentLeadStatus": (
+                            "SCHOLARSHIP_INVITE_SENT"
+                            if invite_sent
+                            else "SCHOLARSHIP_INVITE_FAILED"
+                        ),
+                        "updateTime": now,
+                    }
+                }
+            )
+
+            whatsapp_message_logs.insert_one(
+                {
+                    "phone": phone,
+                    "name": name,
+                    "campaignName": SCHOLARSHIP_MOCK_TEST_CAMPAIGN_NAME,
+                    "direction": "OUTBOUND",
+                    "templateName": TEMPLATE_SCHOLARSHIP_MOCK_TEST,
+                    "messagePurpose": "SCHOLARSHIP_MOCK_TEST_INVITE",
+                    "waMessageId": wa_message_id,
+                    "status": "SENT" if invite_sent else "FAILED",
+                    "apiResponse": send_result.get("response"),
+                    "error": send_result.get("error"),
+                    "createTime": now,
+                    "updateTime": now,
+                }
+            )
+
+            results.append(
+                {
+                    "name": name,
+                    "phone": phone,
+                    "success": invite_sent,
+                    "message": (
+                        "Scholarship mock test invite sent"
+                        if invite_sent
+                        else "Scholarship mock test invite failed"
+                    ),
+                    "waMessageId": wa_message_id,
+                    "error": send_result.get("error"),
+                    "apiResponse": send_result.get("response"),
+                }
+            )
+
+        sent_count = len([r for r in results if r.get("success")])
+        failed_count = len([r for r in results if not r.get("success")])
+
+        return {
+            "success": True,
+            "campaignName": SCHOLARSHIP_MOCK_TEST_CAMPAIGN_NAME,
+            "templateName": TEMPLATE_SCHOLARSHIP_MOCK_TEST,
+            "total": len(payload.leads),
+            "sent": sent_count,
+            "failed": failed_count,
+            "results": results
+        }
+
+    except Exception as e:
+        logger.exception(
+            "Failed to send scholarship mock test invite: %s",
+            str(e)
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while sending scholarship mock test invite"
         )
