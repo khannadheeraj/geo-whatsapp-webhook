@@ -62,7 +62,7 @@ TEMPLATE_SCHOLARSHIP_MOCK_TEST = "upsc_scholarship_mock_test_invitation"
 
 FREE_DEMO_CLASS_CAMPAIGN_NAME = "upsc_free_demo_class_20_21_june"
 
-TEMPLATE_FREE_DEMO_CLASS_INVITATION = "upsc_free_demo_class_invitation"
+TEMPLATE_FREE_DEMO_CLASS_INVITATION = "template_name_upsc_free_demo_class_invitation"
 
 FREE_DEMO_CLASS_TEMPLATE_DISPLAY_NAME = "Aspirant"
 
