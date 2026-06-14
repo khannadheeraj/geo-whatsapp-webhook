@@ -59,6 +59,13 @@ TEMPLATE_COUNSELLING = "upsc_orientation_counselling_31st"
 SCHOLARSHIP_MOCK_TEST_CAMPAIGN_NAME = "upsc_scholarship_mock_test_7_june"
 TEMPLATE_SCHOLARSHIP_MOCK_TEST = "upsc_scholarship_mock_test_invitation"
 
+
+FREE_DEMO_CLASS_CAMPAIGN_NAME = "upsc_free_demo_class_20_21_june"
+
+TEMPLATE_FREE_DEMO_CLASS_INVITATION = "upsc_free_demo_class_invitation"
+
+FREE_DEMO_CLASS_TEMPLATE_DISPLAY_NAME = "Aspirant"
+
 ADMIN_USER_EMAIL = os.getenv(
     "ADMIN_USER_EMAIL",
     "admin@gmail.com"

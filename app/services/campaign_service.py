@@ -11,6 +11,8 @@ from app.config import (
     TEMPLATE_FINAL_DAY_REMINDER,
     SCHOLARSHIP_MOCK_TEST_CAMPAIGN_NAME,
     TEMPLATE_SCHOLARSHIP_MOCK_TEST,
+    FREE_DEMO_CLASS_CAMPAIGN_NAME,
+    TEMPLATE_FREE_DEMO_CLASS_INVITATION,
 )
 from app.db.mongodb import get_collection
 from app.services.whatsapp_sender import send_whatsapp_template
@@ -511,6 +513,21 @@ def process_text_message(event: Dict[str, Any]):
         }
     )
 
+    cleaned_text = (
+        text
+        .strip()
+        .lower()
+        .replace(".", "")
+        .replace(",", "")
+        .replace("!", "")
+    )
+
+    is_stop_request = cleaned_text == "stop"
+
+    # ==========================================
+    # Store every typed message
+    # ==========================================
+
     user_text_messages.insert_one(
         {
             "phone": phone,
@@ -520,6 +537,8 @@ def process_text_message(event: Dict[str, Any]):
             "messagePurpose": message_purpose,
             "messageType": "text",
             "text": text,
+            "cleanedText": cleaned_text,
+            "isStopRequest": is_stop_request,
             "waMessageId": event.get("waMessageId"),
             "contextMessageId": event.get("contextMessageId"),
             "contextFrom": event.get("contextFrom"),
@@ -528,6 +547,10 @@ def process_text_message(event: Dict[str, Any]):
             "updateTime": now,
         }
     )
+
+    # ==========================================
+    # Update recipient latest text summary
+    # ==========================================
 
     if recipient:
         campaign_recipients.update_one(
@@ -549,7 +572,58 @@ def process_text_message(event: Dict[str, Any]):
             }
         )
 
+    # ==========================================
+    # STOP / Unsubscribe Handling
+    # ==========================================
 
+    if is_stop_request:
+        whatsapp_unsubscribed_users = get_collection("whatsapp_unsubscribed_users")
+
+        whatsapp_unsubscribed_users.update_one(
+            {
+                "phone": phone
+            },
+            {
+                "$set": {
+                    "phone": phone,
+                    "name": recipient.get("name", "") if recipient else "",
+                    "isUnsubscribed": True,
+                    "unsubscribeText": text,
+                    "sourceCampaignName": campaign_name,
+                    "sourceTemplateName": template_name,
+                    "sourceMessagePurpose": message_purpose,
+                    "unsubscribedAt": now,
+                    "updateTime": now,
+                },
+                "$setOnInsert": {
+                    "createTime": now,
+                }
+            },
+            upsert=True
+        )
+
+        if recipient:
+            campaign_recipients.update_one(
+                {
+                    "_id": recipient["_id"]
+                },
+                {
+                    "$set": {
+                        "isUnsubscribed": True,
+                        "unsubscribeText": text,
+                        "unsubscribedAt": now,
+                        "currentLeadStatus": "UNSUBSCRIBED",
+                        "updateTime": now,
+                    }
+                }
+            )
+
+        logger.info(
+            "User unsubscribed via STOP | phone={} campaign={} template={}",
+            phone,
+            campaign_name,
+            template_name
+        )
 # =========================================================
 # Main Button Router
 # This routes button clicks based on contextMessageId.
@@ -563,6 +637,7 @@ def process_button_click(event: Dict[str, Any]):
     if not phone or not (button_text or button_payload):
         return
 
+    # Find original outbound message using contextMessageId
     outbound_log = get_outbound_log_for_context(event)
 
     campaign_name = (
@@ -606,6 +681,7 @@ def process_button_click(event: Dict[str, Any]):
 
     # ==================================================
     # Scholarship Mock Test Campaign
+    # Buttons:
     # Interested / Location / Talk with Management
     # No lock. Track every click.
     # ==================================================
@@ -620,6 +696,7 @@ def process_button_click(event: Dict[str, Any]):
 
     # ==================================================
     # Final Day Reminder Campaign
+    # Buttons:
     # Know More / Call Now / Get Location
     # No lock. Track every click.
     # ==================================================
@@ -633,7 +710,28 @@ def process_button_click(event: Dict[str, Any]):
         return
 
     # ==================================================
+    # Free Demo Class Campaign
+    # Template:
+    # upsc_free_demo_class_invitation
+    #
+    # Trackable button:
+    # Interested
+    #
+    # Location and Talk to Counsellor are CTA buttons,
+    # so webhook tracking is not guaranteed for them.
+    # ==================================================
+
+    if message_purpose == "FREE_DEMO_CLASS_INVITE":
+        process_free_demo_class_button_click(
+            event=event,
+            recipient=recipient,
+            outbound_log=outbound_log
+        )
+        return
+
+    # ==================================================
     # Old Orientation Invite Campaign
+    # Buttons:
     # Yes, I will attend / Talk to Counselor
     # First click wins.
     # ==================================================
@@ -768,5 +866,103 @@ def process_button_click(event: Dict[str, Any]):
             "error": send_result.get("error"),
             "createTime": now,
             "updateTime": now,
+        }
+    )
+
+def normalize_free_demo_class_button(
+    button_text: str = "",
+    button_payload: str = ""
+):
+    cleaned_text = (button_text or "").strip().lower()
+    cleaned_payload = (button_payload or "").strip().lower()
+
+    if (
+        cleaned_text == "interested"
+        or cleaned_payload in [
+            "interested",
+            "demo_class_interested",
+            "free_demo_class_interested",
+        ]
+    ):
+        return {
+            "action": "FREE_DEMO_CLASS_INTERESTED",
+            "buttonLabel": "Interested"
+        }
+
+    return None
+
+
+def process_free_demo_class_button_click(
+    event: Dict[str, Any],
+    recipient: Dict[str, Any],
+    outbound_log: Optional[Dict[str, Any]] = None
+):
+    phone = event.get("from")
+    button_text = event.get("buttonText")
+    button_payload = event.get("buttonPayload")
+    now = int(time.time() * 1000)
+
+    if not phone or not (button_text or button_payload):
+        return
+
+    demo_action = normalize_free_demo_class_button(
+        button_text=button_text,
+        button_payload=button_payload
+    )
+
+    if not demo_action:
+        logger.info(
+            "Unknown free demo class button | phone={} buttonText={} buttonPayload={}",
+            phone,
+            button_text,
+            button_payload
+        )
+        return
+
+    campaign_recipients = get_collection("campaign_recipients")
+    demo_class_button_clicks = get_collection("demo_class_button_clicks")
+
+    if outbound_log is None:
+        outbound_log = get_outbound_log_for_context(event)
+
+    demo_class_button_clicks.insert_one(
+        {
+            "phone": phone,
+            "name": recipient.get("name", ""),
+            "campaignName": FREE_DEMO_CLASS_CAMPAIGN_NAME,
+            "templateName": TEMPLATE_FREE_DEMO_CLASS_INVITATION,
+            "messagePurpose": "FREE_DEMO_CLASS_INVITE",
+            "buttonText": button_text,
+            "buttonPayload": button_payload,
+            "normalizedAction": demo_action["action"],
+            "buttonLabel": demo_action["buttonLabel"],
+            "contextMessageId": event.get("contextMessageId"),
+            "outboundLogId": outbound_log.get("_id") if outbound_log else None,
+            "waMessageId": event.get("waMessageId"),
+            "rawEvent": event,
+            "createTime": now,
+            "updateTime": now,
+        }
+    )
+
+    campaign_recipients.update_one(
+        {
+            "_id": recipient["_id"]
+        },
+        {
+            "$set": {
+                "freeDemoClassLastClickedButton": demo_action["buttonLabel"],
+                "freeDemoClassLastClickedAction": demo_action["action"],
+                "freeDemoClassLastClickedAt": now,
+                "currentLeadStatus": demo_action["action"],
+                "updateTime": now,
+            },
+            "$addToSet": {
+                "freeDemoClassClickedButtons": demo_action["buttonLabel"],
+                "freeDemoClassClickedActions": demo_action["action"],
+            },
+            "$inc": {
+                "freeDemoClassClickCount": 1
+            }
         }
     )

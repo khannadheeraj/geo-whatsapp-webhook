@@ -3,12 +3,23 @@ import time
 
 from fastapi import APIRouter, HTTPException
 
+# from app.config import (
+#     DEFAULT_CAMPAIGN_NAME,
+#     TEMPLATE_INVITE,
+#     TEMPLATE_FINAL_DAY_REMINDER,
+#     SCHOLARSHIP_MOCK_TEST_CAMPAIGN_NAME,
+#     TEMPLATE_SCHOLARSHIP_MOCK_TEST,
+# )
+
 from app.config import (
     DEFAULT_CAMPAIGN_NAME,
     TEMPLATE_INVITE,
     TEMPLATE_FINAL_DAY_REMINDER,
     SCHOLARSHIP_MOCK_TEST_CAMPAIGN_NAME,
     TEMPLATE_SCHOLARSHIP_MOCK_TEST,
+    FREE_DEMO_CLASS_CAMPAIGN_NAME,
+    TEMPLATE_FREE_DEMO_CLASS_INVITATION,
+    FREE_DEMO_CLASS_TEMPLATE_DISPLAY_NAME,
 )
 from app.db.mongodb import get_collection
 from app.schemas.campaign_schema import (
@@ -819,4 +830,215 @@ async def send_scholarship_mock_test_invite(
         raise HTTPException(
             status_code=500,
             detail="Something went wrong while sending scholarship mock test invite"
+        )
+
+
+@router.post("/upsc-free-demo-class/send-invite")
+async def send_free_demo_class_invite(
+    payload: CampaignInviteRequestModel
+):
+    try:
+        campaign_recipients = get_collection("campaign_recipients")
+        whatsapp_message_logs = get_collection("whatsapp_message_logs")
+
+        results = []
+
+        for lead in payload.leads:
+            now = int(time.time() * 1000)
+
+            # Real name stored in DB
+            db_name = lead.name.strip() if lead.name else "Aspirant"
+
+            # WhatsApp template always receives Aspirant
+            template_name_value = FREE_DEMO_CLASS_TEMPLATE_DISPLAY_NAME
+
+            phone = clean_phone_number(lead.phone)
+
+            if not phone:
+                results.append(
+                    {
+                        "name": db_name,
+                        "phone": lead.phone,
+                        "success": False,
+                        "message": "Phone is required"
+                    }
+                )
+                continue
+
+            unsubscribed_users = get_collection("whatsapp_unsubscribed_users")
+
+            existing_unsubscribe = unsubscribed_users.find_one(
+                {
+                    "phone": phone,
+                    "isUnsubscribed": True
+                }
+            )
+
+            if existing_unsubscribe:
+                results.append(
+                    {
+                        "name": db_name,
+                        "templateDisplayNameSent": template_name_value,
+                        "phone": phone,
+                        "success": False,
+                        "skipped": True,
+                        "message": "User has unsubscribed"
+                    }
+                )
+                continue
+
+            # ==========================================
+            # Upsert campaign recipient
+            # ==========================================
+
+            campaign_recipients.update_one(
+                {
+                    "phone": phone,
+                    "campaignName": FREE_DEMO_CLASS_CAMPAIGN_NAME
+                },
+                {
+                    "$set": {
+                        "name": db_name,
+                        "phone": phone,
+                        "campaignName": FREE_DEMO_CLASS_CAMPAIGN_NAME,
+                        "freeDemoClassTemplateName": TEMPLATE_FREE_DEMO_CLASS_INVITATION,
+                        "templateDisplayNameSent": template_name_value,
+                        "updateTime": now,
+                    },
+                    "$setOnInsert": {
+                        "freeDemoClassInviteStatus": "PENDING",
+                        "currentLeadStatus": "FREE_DEMO_CLASS_INVITE_PENDING",
+
+                        "freeDemoClassClickedButtons": [],
+                        "freeDemoClassClickedActions": [],
+                        "freeDemoClassClickCount": 0,
+                        "freeDemoClassLastClickedButton": None,
+                        "freeDemoClassLastClickedAction": None,
+                        "freeDemoClassLastClickedAt": None,
+
+                        "lastTextMessage": None,
+                        "lastTextMessageAt": None,
+                        "textMessageCount": 0,
+
+                        "createTime": now,
+                    }
+                },
+                upsert=True
+            )
+
+            # ==========================================
+            # Send template
+            # {{1}} = Aspirant
+            # ==========================================
+
+            send_result = send_whatsapp_template(
+                phone=phone,
+                template_name=TEMPLATE_FREE_DEMO_CLASS_INVITATION,
+                name=template_name_value
+            )
+
+            invite_sent = bool(send_result.get("success"))
+            wa_message_id = extract_wa_message_id(send_result)
+
+            now = int(time.time() * 1000)
+
+            campaign_recipients.update_one(
+                {
+                    "phone": phone,
+                    "campaignName": FREE_DEMO_CLASS_CAMPAIGN_NAME
+                },
+                {
+                    "$set": {
+                        "freeDemoClassInviteStatus": "SENT" if invite_sent else "FAILED",
+                        "freeDemoClassInviteSentAt": now if invite_sent else None,
+                        "freeDemoClassInviteWaMessageId": wa_message_id,
+                        "freeDemoClassInviteError": None if invite_sent else send_result.get("error"),
+                        "freeDemoClassInviteApiResponse": send_result.get("response"),
+                        "currentLeadStatus": (
+                            "FREE_DEMO_CLASS_INVITE_SENT"
+                            if invite_sent
+                            else "FREE_DEMO_CLASS_INVITE_FAILED"
+                        ),
+                        "updateTime": now,
+                    }
+                }
+            )
+
+            whatsapp_message_logs.insert_one(
+                {
+                    "phone": phone,
+                    "name": db_name,
+                    "templateDisplayNameSent": template_name_value,
+                    "campaignName": FREE_DEMO_CLASS_CAMPAIGN_NAME,
+                    "direction": "OUTBOUND",
+                    "templateName": TEMPLATE_FREE_DEMO_CLASS_INVITATION,
+                    "messagePurpose": "FREE_DEMO_CLASS_INVITE",
+                    "waMessageId": wa_message_id,
+                    "status": "SENT" if invite_sent else "FAILED",
+                    "apiResponse": send_result.get("response"),
+                    "error": send_result.get("error"),
+                    "createTime": now,
+                    "updateTime": now,
+                }
+            )
+
+            results.append(
+                {
+                    "name": db_name,
+                    "templateDisplayNameSent": template_name_value,
+                    "phone": phone,
+                    "success": invite_sent,
+                    "message": (
+                        "Free demo class invite sent"
+                        if invite_sent
+                        else "Free demo class invite failed"
+                    ),
+                    "waMessageId": wa_message_id,
+                    "error": send_result.get("error"),
+                    "apiResponse": send_result.get("response"),
+                }
+            )
+
+        sent_count = len(
+            [
+                r for r in results
+                if r.get("success") and not r.get("skipped")
+            ]
+        )
+
+        skipped_count = len(
+            [
+                r for r in results
+                if r.get("skipped")
+            ]
+        )
+
+        failed_count = len(
+            [
+                r for r in results
+                if not r.get("success") and not r.get("skipped")
+            ]
+        )
+
+        return {
+                "success": True,
+                "campaignName": FREE_DEMO_CLASS_CAMPAIGN_NAME,
+                "templateName": TEMPLATE_FREE_DEMO_CLASS_INVITATION,
+                "templateDisplayNameSent": FREE_DEMO_CLASS_TEMPLATE_DISPLAY_NAME,
+                "total": len(payload.leads),
+                "sent": sent_count,
+                "skipped": skipped_count,
+                "failed": failed_count,
+                "results": results
+            }
+
+    except Exception as e:
+        logger.exception(
+            "Failed to send free demo class invite: %s",
+            str(e)
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while sending free demo class invite"
         )
