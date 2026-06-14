@@ -59,6 +59,7 @@ async def get_users(
                     "normalizedPhone": user.get("normalizedPhone"),
                     "createTime": user.get("createTime"),
                     "updateTime": user.get("updateTime"),
+                    "description": user.get("description", None),  # ← added
                 }
             )
 
@@ -82,7 +83,6 @@ async def get_users(
             status_code=500,
             detail="Something went wrong while fetching users"
         )
-
 
 @router.post("/bulk-upload")
 async def bulk_upload_users(payload: BulkUserUploadRequestModel):
@@ -112,6 +112,7 @@ async def bulk_upload_users(payload: BulkUserUploadRequestModel):
                     "username": username,
                     "phoneNumber": user.phoneNumber,
                     "normalizedPhone": normalized_phone,
+                    "description": user.description if user.description else None,  # ← added
                     "createTime": now,
                     "updateTime": now,
                 }

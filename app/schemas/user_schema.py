@@ -1,12 +1,11 @@
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel
 
-
-class UserPayloadModel(BaseModel):
+class UserUploadItemModel(BaseModel):
     username: str
     phoneNumber: str
-
+    description: Optional[str] = None  # ← added
 
 class BulkUserUploadRequestModel(BaseModel):
-    users: List[UserPayloadModel]
+    users: list[UserUploadItemModel]
