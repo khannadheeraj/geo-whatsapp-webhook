@@ -201,3 +201,85 @@ async def bulk_upload_users(payload: BulkUserUploadRequestModel):
             status_code=500,
             detail="Something went wrong while uploading users"
         )
+
+
+
+@router.get("/campaigns/read-status")
+async def get_read_status_users(
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(10, ge=1, le=100),
+):
+    try:
+        events_collection = get_collection("whatsapp_events")
+
+        pipeline = [
+            {
+                "$match": {
+                    "status": "read",
+                    "waMessageId": {"$exists": True, "$ne": None}
+                }
+            },
+            {"$sort": {"updateTime": -1}},
+            {
+                "$group": {
+                    "_id": "$waMessageId",
+                    "doc": {"$first": "$$ROOT"}
+                }
+            },
+            {"$replaceRoot": {"newRoot": "$doc"}},
+            {
+                "$facet": {
+                    "data": [
+                        {"$skip": (page - 1) * pageSize},
+                        {"$limit": pageSize}
+                    ],
+                    "totalCount": [
+                        {"$count": "count"}
+                    ]
+                }
+            }
+        ]
+
+        result = list(events_collection.aggregate(pipeline))
+
+        records = result[0]["data"] if result else []
+
+        total_count = (
+            result[0]["totalCount"][0]["count"]
+            if result and result[0]["totalCount"]
+            else 0
+        )
+
+        total_pages = (total_count + pageSize - 1) // pageSize
+
+        formatted_users = [
+            {
+                "id": str(event.get("_id")),
+                "waMessageId": event.get("waMessageId"),
+                "phoneNumber": event.get("displayPhoneNumber"),
+                "status": event.get("status"),
+                "createTime": event.get("createTime"),
+                "updateTime": event.get("updateTime"),
+            }
+            for event in records
+        ]
+
+        return {
+            "success": True,
+            "data": formatted_users,
+            "pagination": {
+                "page": page,
+                "pageSize": pageSize,
+                "totalRecords": total_count,
+                "totalPages": total_pages,
+                "hasNextPage": page < total_pages,
+                "hasPrevPage": page > 1,
+            },
+        }
+
+    except Exception as e:
+        logger.exception("Failed to fetch read status users: %s", str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while fetching read status users"
+        )
