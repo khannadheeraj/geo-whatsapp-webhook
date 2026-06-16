@@ -6,6 +6,9 @@ from fastapi import APIRouter, HTTPException, Query
 from app.db.mongodb import get_collection
 from app.schemas.user_schema import BulkUserUploadRequestModel
 from app.utils.phone_utils import clean_phone_number
+from typing import Optional
+
+
 
 logger = logging.getLogger("whatsapp-webhook")
 
@@ -204,29 +207,51 @@ async def bulk_upload_users(payload: BulkUserUploadRequestModel):
 
 
 
+
 @router.get("/campaigns/read-status")
 async def get_read_status_users(
     page: int = Query(1, ge=1),
     pageSize: int = Query(10, ge=1, le=100),
+    startDate: Optional[int] = Query(None),
+    endDate: Optional[int] = Query(None),
 ):
     try:
         events_collection = get_collection("whatsapp_events")
 
+        match_filter = {
+            "status": "read",
+            "waMessageId": {"$exists": True, "$ne": None},
+        }
+
+        if startDate is not None or endDate is not None:
+            match_filter["createTime"] = {}
+
+            if startDate is not None:
+                match_filter["createTime"]["$gte"] = startDate
+
+            if endDate is not None:
+                match_filter["createTime"]["$lte"] = endDate
+
         pipeline = [
             {
-                "$match": {
-                    "status": "read",
-                    "waMessageId": {"$exists": True, "$ne": None}
+                "$match": match_filter
+            },
+            {
+                "$sort": {
+                    "updateTime": -1
                 }
             },
-            {"$sort": {"updateTime": -1}},
             {
                 "$group": {
                     "_id": "$waMessageId",
                     "doc": {"$first": "$$ROOT"}
                 }
             },
-            {"$replaceRoot": {"newRoot": "$doc"}},
+            {
+                "$replaceRoot": {
+                    "newRoot": "$doc"
+                }
+            },
             {
                 "$facet": {
                     "data": [
@@ -256,13 +281,42 @@ async def get_read_status_users(
             {
                 "id": str(event.get("_id")),
                 "waMessageId": event.get("waMessageId"),
-                "phoneNumber": event.get("displayPhoneNumber"),
+                "phoneNumber": event.get("recipientId"),
                 "status": event.get("status"),
+                "iInteractionStatus": True,
                 "createTime": event.get("createTime"),
                 "updateTime": event.get("updateTime"),
             }
             for event in records
         ]
+
+        unique_users_recipient_ids = list(
+            {
+                user["phoneNumber"]
+                for user in formatted_users
+                if user.get("phoneNumber")
+            }
+        )
+
+        campaign_users_collection = get_collection("campaign_recipients")
+
+        users = list(
+            campaign_users_collection.find(
+                {"phone": {"$in": unique_users_recipient_ids}},
+                {"phone": 1, "name": 1}
+            )
+        )
+
+        user_map = {
+            user["phone"]: user
+            for user in users
+            if user.get("phone")
+        }
+
+        for user in formatted_users:
+            user["username"] = user_map.get(
+                user["phoneNumber"], {}
+            ).get("name", "User")
 
         return {
             "success": True,
@@ -275,10 +329,18 @@ async def get_read_status_users(
                 "hasNextPage": page < total_pages,
                 "hasPrevPage": page > 1,
             },
+            "filters": {
+                "startDate": startDate,
+                "endDate": endDate,
+            }
         }
 
     except Exception as e:
-        logger.exception("Failed to fetch read status users: %s", str(e))
+        logger.exception(
+            "Failed to fetch read status users: %s",
+            str(e)
+        )
+
         raise HTTPException(
             status_code=500,
             detail="Something went wrong while fetching read status users"
