@@ -13,6 +13,7 @@ from app.config import (
     TEMPLATE_SCHOLARSHIP_MOCK_TEST,
     FREE_DEMO_CLASS_CAMPAIGN_NAME,
     TEMPLATE_FREE_DEMO_CLASS_INVITATION,
+    TEMPLATE_UPSC_DEMO_CLASS_REMINDER
 )
 from app.db.mongodb import get_collection
 from app.services.whatsapp_sender import send_whatsapp_template
@@ -32,6 +33,114 @@ def extract_wa_message_id(send_result: Dict[str, Any]):
         )
     except Exception:
         return None
+
+
+def normalize_free_demo_class_reminder_button(
+    button_text: str = "",
+    button_payload: str = ""
+):
+    cleaned_text = (button_text or "").strip().lower()
+    cleaned_payload = (button_payload or "").strip().lower()
+
+    if (
+        cleaned_text in [
+            "yes i will attend",
+            "yes, i will attend",
+            "yes i'll attend",
+            "yes, i'll attend",
+            "yes attend",
+            "yes"
+        ]
+        or cleaned_payload in [
+            "yes_i_will_attend",
+            "yes-i-will-attend",
+            "yes_i_will_attend_demo",
+            "demo_class_yes_attend",
+            "yes"
+        ]
+    ):
+        return {
+            "action": "FREE_DEMO_CLASS_REMINDER_YES_ATTEND",
+            "buttonLabel": "Yes I will attend"
+        }
+
+    return None
+
+
+def process_free_demo_class_reminder_button_click(
+    event: Dict[str, Any],
+    recipient: Dict[str, Any],
+    outbound_log: Optional[Dict[str, Any]] = None
+):
+    phone = event.get("from")
+    button_text = event.get("buttonText")
+    button_payload = event.get("buttonPayload")
+    now = int(time.time() * 1000)
+
+    if not phone or not (button_text or button_payload):
+        return
+
+    reminder_action = normalize_free_demo_class_reminder_button(
+        button_text=button_text,
+        button_payload=button_payload
+    )
+
+    if not reminder_action:
+        logger.info(
+            "Unknown free demo class reminder button | phone={} buttonText={} buttonPayload={}",
+            phone,
+            button_text,
+            button_payload
+        )
+        return
+
+    campaign_recipients = get_collection("campaign_recipients")
+    demo_class_button_clicks = get_collection("demo_class_button_clicks")
+
+    if outbound_log is None:
+        outbound_log = get_outbound_log_for_context(event)
+
+    demo_class_button_clicks.insert_one(
+        {
+            "phone": phone,
+            "name": recipient.get("name", ""),
+            "campaignName": FREE_DEMO_CLASS_CAMPAIGN_NAME,
+            "templateName": TEMPLATE_UPSC_DEMO_CLASS_REMINDER,
+            "messagePurpose": "FREE_DEMO_CLASS_REMINDER",
+            "buttonText": button_text,
+            "buttonPayload": button_payload,
+            "normalizedAction": reminder_action["action"],
+            "buttonLabel": reminder_action["buttonLabel"],
+            "contextMessageId": event.get("contextMessageId"),
+            "outboundLogId": outbound_log.get("_id") if outbound_log else None,
+            "waMessageId": event.get("waMessageId"),
+            "rawEvent": event,
+            "createTime": now,
+            "updateTime": now,
+        }
+    )
+
+    campaign_recipients.update_one(
+        {
+            "_id": recipient["_id"]
+        },
+        {
+            "$set": {
+                "freeDemoClassReminderLastClickedButton": reminder_action["buttonLabel"],
+                "freeDemoClassReminderLastClickedAction": reminder_action["action"],
+                "freeDemoClassReminderLastClickedAt": now,
+                "currentLeadStatus": reminder_action["action"],
+                "updateTime": now,
+            },
+            "$addToSet": {
+                "freeDemoClassReminderClickedButtons": reminder_action["buttonLabel"],
+                "freeDemoClassReminderClickedActions": reminder_action["action"],
+            },
+            "$inc": {
+                "freeDemoClassReminderClickCount": 1
+            }
+        }
+    )
 
 
 def get_outbound_log_for_context(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -727,6 +836,10 @@ def process_button_click(event: Dict[str, Any]):
             recipient=recipient,
             outbound_log=outbound_log
         )
+        return
+
+    if message_purpose == "FREE_DEMO_CLASS_REMINDER":
+        process_free_demo_class_reminder_button_click(...)
         return
 
     # ==================================================

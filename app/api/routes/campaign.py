@@ -20,6 +20,7 @@ from app.config import (
     FREE_DEMO_CLASS_CAMPAIGN_NAME,
     TEMPLATE_FREE_DEMO_CLASS_INVITATION,
     FREE_DEMO_CLASS_TEMPLATE_DISPLAY_NAME,
+    TEMPLATE_UPSC_DEMO_CLASS_REMINDER
 )
 from app.db.mongodb import get_collection
 from app.schemas.campaign_schema import (
@@ -1041,4 +1042,253 @@ async def send_free_demo_class_invite(
         raise HTTPException(
             status_code=500,
             detail="Something went wrong while sending free demo class invite"
+        )
+
+
+@router.post("/upsc-free-demo-class/send-reminder")
+async def send_free_demo_class_reminder(
+    payload: CampaignInviteRequestModel
+):
+    try:
+        campaign_recipients = get_collection("campaign_recipients")
+        whatsapp_message_logs = get_collection("whatsapp_message_logs")
+        unsubscribed_users = get_collection("whatsapp_unsubscribed_users")
+
+        results = []
+
+        for lead in payload.leads:
+            now = int(time.time() * 1000)
+
+            # Real name stored in DB
+            db_name = lead.name.strip() if lead.name else "Aspirant"
+
+            # WhatsApp template always receives Aspirant
+            template_name_value = FREE_DEMO_CLASS_TEMPLATE_DISPLAY_NAME
+
+            phone = clean_phone_number(lead.phone)
+
+            if not phone:
+                results.append(
+                    {
+                        "name": db_name,
+                        "phone": lead.phone,
+                        "success": False,
+                        "message": "Phone is required"
+                    }
+                )
+                continue
+
+            # ==========================================
+            # Skip unsubscribed users
+            # ==========================================
+
+            existing_unsubscribe = unsubscribed_users.find_one(
+                {
+                    "phone": phone,
+                    "isUnsubscribed": True
+                }
+            )
+
+            if existing_unsubscribe:
+                results.append(
+                    {
+                        "name": db_name,
+                        "templateDisplayNameSent": template_name_value,
+                        "phone": phone,
+                        "success": False,
+                        "skipped": True,
+                        "message": "User has unsubscribed"
+                    }
+                )
+                continue
+
+            # ==========================================
+            # Upsert / update campaign recipient
+            # ==========================================
+
+            campaign_recipients.update_one(
+                {
+                    "phone": phone,
+                    "campaignName": FREE_DEMO_CLASS_CAMPAIGN_NAME
+                },
+                {
+                    "$set": {
+                        "name": db_name,
+                        "phone": phone,
+                        "campaignName": FREE_DEMO_CLASS_CAMPAIGN_NAME,
+                        "freeDemoClassReminderTemplateName": TEMPLATE_UPSC_DEMO_CLASS_REMINDER,
+                        "freeDemoClassReminderTemplateDisplayNameSent": template_name_value,
+                        "updateTime": now,
+                    },
+                    "$setOnInsert": {
+                        "currentLeadStatus": "FREE_DEMO_CLASS_REMINDER_PENDING",
+
+                        "freeDemoClassReminderClickedButtons": [],
+                        "freeDemoClassReminderClickedActions": [],
+                        "freeDemoClassReminderClickCount": 0,
+                        "freeDemoClassReminderLastClickedButton": None,
+                        "freeDemoClassReminderLastClickedAction": None,
+                        "freeDemoClassReminderLastClickedAt": None,
+
+                        "lastTextMessage": None,
+                        "lastTextMessageAt": None,
+                        "textMessageCount": 0,
+
+                        "createTime": now,
+                    }
+                },
+                upsert=True
+            )
+
+            # ==========================================
+            # Avoid duplicate reminder
+            # ==========================================
+
+            existing_recipient = campaign_recipients.find_one(
+                {
+                    "phone": phone,
+                    "campaignName": FREE_DEMO_CLASS_CAMPAIGN_NAME
+                }
+            )
+
+            if (
+                existing_recipient
+                and existing_recipient.get("freeDemoClassReminderStatus") == "SENT"
+            ):
+                results.append(
+                    {
+                        "name": db_name,
+                        "templateDisplayNameSent": template_name_value,
+                        "phone": phone,
+                        "success": True,
+                        "skipped": True,
+                        "message": "Free demo class reminder already sent",
+                        "waMessageId": existing_recipient.get("freeDemoClassReminderWaMessageId")
+                    }
+                )
+                continue
+
+            # ==========================================
+            # Send utility reminder template
+            # {{1}} = Aspirant
+            # ==========================================
+
+            send_result = send_whatsapp_template(
+                phone=phone,
+                template_name=TEMPLATE_UPSC_DEMO_CLASS_REMINDER,
+                name=template_name_value
+            )
+
+            reminder_sent = bool(send_result.get("success"))
+            wa_message_id = extract_wa_message_id(send_result)
+
+            now = int(time.time() * 1000)
+
+            campaign_recipients.update_one(
+                {
+                    "phone": phone,
+                    "campaignName": FREE_DEMO_CLASS_CAMPAIGN_NAME
+                },
+                {
+                    "$set": {
+                        "freeDemoClassReminderStatus": "SENT" if reminder_sent else "FAILED",
+                        "freeDemoClassReminderSentAt": now if reminder_sent else None,
+                        "freeDemoClassReminderWaMessageId": wa_message_id,
+                        "freeDemoClassReminderError": None if reminder_sent else send_result.get("error"),
+                        "freeDemoClassReminderApiResponse": send_result.get("response"),
+
+                        "freeDemoClassReminderClickedButtons": [],
+                        "freeDemoClassReminderClickedActions": [],
+                        "freeDemoClassReminderClickCount": 0,
+                        "freeDemoClassReminderLastClickedButton": None,
+                        "freeDemoClassReminderLastClickedAction": None,
+                        "freeDemoClassReminderLastClickedAt": None,
+
+                        "currentLeadStatus": (
+                            "FREE_DEMO_CLASS_REMINDER_SENT"
+                            if reminder_sent
+                            else "FREE_DEMO_CLASS_REMINDER_FAILED"
+                        ),
+                        "updateTime": now,
+                    }
+                }
+            )
+
+            whatsapp_message_logs.insert_one(
+                {
+                    "phone": phone,
+                    "name": db_name,
+                    "templateDisplayNameSent": template_name_value,
+                    "campaignName": FREE_DEMO_CLASS_CAMPAIGN_NAME,
+                    "direction": "OUTBOUND",
+                    "templateName": TEMPLATE_UPSC_DEMO_CLASS_REMINDER,
+                    "messagePurpose": "FREE_DEMO_CLASS_REMINDER",
+                    "waMessageId": wa_message_id,
+                    "status": "SENT" if reminder_sent else "FAILED",
+                    "apiResponse": send_result.get("response"),
+                    "error": send_result.get("error"),
+                    "createTime": now,
+                    "updateTime": now,
+                }
+            )
+
+            results.append(
+                {
+                    "name": db_name,
+                    "templateDisplayNameSent": template_name_value,
+                    "phone": phone,
+                    "success": reminder_sent,
+                    "message": (
+                        "Free demo class reminder sent"
+                        if reminder_sent
+                        else "Free demo class reminder failed"
+                    ),
+                    "waMessageId": wa_message_id,
+                    "error": send_result.get("error"),
+                    "apiResponse": send_result.get("response"),
+                }
+            )
+
+        sent_count = len(
+            [
+                r for r in results
+                if r.get("success") and not r.get("skipped")
+            ]
+        )
+
+        skipped_count = len(
+            [
+                r for r in results
+                if r.get("skipped")
+            ]
+        )
+
+        failed_count = len(
+            [
+                r for r in results
+                if not r.get("success") and not r.get("skipped")
+            ]
+        )
+
+        return {
+            "success": True,
+            "campaignName": FREE_DEMO_CLASS_CAMPAIGN_NAME,
+            "templateName": TEMPLATE_UPSC_DEMO_CLASS_REMINDER,
+            "templateDisplayNameSent": FREE_DEMO_CLASS_TEMPLATE_DISPLAY_NAME,
+            "total": len(payload.leads),
+            "sent": sent_count,
+            "skipped": skipped_count,
+            "failed": failed_count,
+            "results": results
+        }
+
+    except Exception as e:
+        logger.exception(
+            "Failed to send free demo class reminder: %s",
+            str(e)
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while sending free demo class reminder"
         )
