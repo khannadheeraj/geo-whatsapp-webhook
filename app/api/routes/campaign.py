@@ -20,7 +20,9 @@ from app.config import (
     FREE_DEMO_CLASS_CAMPAIGN_NAME,
     TEMPLATE_FREE_DEMO_CLASS_INVITATION,
     FREE_DEMO_CLASS_TEMPLATE_DISPLAY_NAME,
-    TEMPLATE_UPSC_DEMO_CLASS_REMINDER
+    DEMO_CLASS_27_JUN_CAMPAIGN_NAME,
+    TEMPLATE_DEMO_CLASS_ONLINE_OFFLINE_27_JUN,
+    DEMO_CLASS_27_JUN_TEMPLATE_DISPLAY_NAME,
 )
 from app.db.mongodb import get_collection
 from app.schemas.campaign_schema import (
@@ -1291,4 +1293,239 @@ async def send_free_demo_class_reminder(
         raise HTTPException(
             status_code=500,
             detail="Something went wrong while sending free demo class reminder"
+        )
+
+
+@router.post("/upsc-demo-class-27-jun/send-reminder")
+async def send_demo_class_27_jun_reminder(
+    payload: CampaignInviteRequestModel
+):
+    try:
+        campaign_recipients = get_collection("campaign_recipients")
+        whatsapp_message_logs = get_collection("whatsapp_message_logs")
+        unsubscribed_users = get_collection("whatsapp_unsubscribed_users")
+
+        results = []
+
+        for lead in payload.leads:
+            now = int(time.time() * 1000)
+
+            # Real name stored in DB
+            db_name = lead.name.strip() if lead.name else "Aspirant"
+
+            # Template variable {{1}} always receives Aspirants
+            template_name_value = DEMO_CLASS_27_JUN_TEMPLATE_DISPLAY_NAME
+
+            phone = clean_phone_number(lead.phone)
+
+            if not phone:
+                results.append(
+                    {
+                        "name": db_name,
+                        "phone": lead.phone,
+                        "success": False,
+                        "message": "Phone is required"
+                    }
+                )
+                continue
+
+            # ==========================================
+            # Skip users who replied STOP earlier
+            # ==========================================
+
+            existing_unsubscribe = unsubscribed_users.find_one(
+                {
+                    "phone": phone,
+                    "isUnsubscribed": True
+                }
+            )
+
+            if existing_unsubscribe:
+                results.append(
+                    {
+                        "name": db_name,
+                        "phone": phone,
+                        "templateDisplayNameSent": template_name_value,
+                        "success": False,
+                        "skipped": True,
+                        "message": "User has unsubscribed"
+                    }
+                )
+                continue
+
+            # ==========================================
+            # Upsert campaign recipient
+            # ==========================================
+
+            campaign_recipients.update_one(
+                {
+                    "phone": phone,
+                    "campaignName": DEMO_CLASS_27_JUN_CAMPAIGN_NAME
+                },
+                {
+                    "$set": {
+                        "name": db_name,
+                        "phone": phone,
+                        "campaignName": DEMO_CLASS_27_JUN_CAMPAIGN_NAME,
+                        "demoClass27JunTemplateName": TEMPLATE_DEMO_CLASS_ONLINE_OFFLINE_27_JUN,
+                        "templateDisplayNameSent": template_name_value,
+                        "updateTime": now,
+                    },
+                    "$setOnInsert": {
+                        "demoClass27JunReminderStatus": "PENDING",
+                        "currentLeadStatus": "DEMO_CLASS_27_JUN_REMINDER_PENDING",
+
+                        "lastTextMessage": None,
+                        "lastTextMessageAt": None,
+                        "textMessageCount": 0,
+
+                        "createTime": now,
+                    }
+                },
+                upsert=True
+            )
+
+            # ==========================================
+            # Avoid duplicate send
+            # ==========================================
+
+            existing_recipient = campaign_recipients.find_one(
+                {
+                    "phone": phone,
+                    "campaignName": DEMO_CLASS_27_JUN_CAMPAIGN_NAME
+                }
+            )
+
+            if (
+                existing_recipient
+                and existing_recipient.get("demoClass27JunReminderStatus") == "SENT"
+            ):
+                results.append(
+                    {
+                        "name": db_name,
+                        "phone": phone,
+                        "templateDisplayNameSent": template_name_value,
+                        "success": True,
+                        "skipped": True,
+                        "message": "Demo class 27 Jun reminder already sent",
+                        "waMessageId": existing_recipient.get("demoClass27JunReminderWaMessageId")
+                    }
+                )
+                continue
+
+            # ==========================================
+            # Send template
+            # {{1}} = Aspirants
+            # ==========================================
+
+            send_result = send_whatsapp_template(
+                phone=phone,
+                template_name=TEMPLATE_DEMO_CLASS_ONLINE_OFFLINE_27_JUN,
+                name=template_name_value
+            )
+
+            reminder_sent = bool(send_result.get("success"))
+            wa_message_id = extract_wa_message_id(send_result)
+
+            now = int(time.time() * 1000)
+
+            campaign_recipients.update_one(
+                {
+                    "phone": phone,
+                    "campaignName": DEMO_CLASS_27_JUN_CAMPAIGN_NAME
+                },
+                {
+                    "$set": {
+                        "demoClass27JunReminderStatus": "SENT" if reminder_sent else "FAILED",
+                        "demoClass27JunReminderSentAt": now if reminder_sent else None,
+                        "demoClass27JunReminderWaMessageId": wa_message_id,
+                        "demoClass27JunReminderError": None if reminder_sent else send_result.get("error"),
+                        "demoClass27JunReminderApiResponse": send_result.get("response"),
+                        "currentLeadStatus": (
+                            "DEMO_CLASS_27_JUN_REMINDER_SENT"
+                            if reminder_sent
+                            else "DEMO_CLASS_27_JUN_REMINDER_FAILED"
+                        ),
+                        "updateTime": now,
+                    }
+                }
+            )
+
+            whatsapp_message_logs.insert_one(
+                {
+                    "phone": phone,
+                    "name": db_name,
+                    "templateDisplayNameSent": template_name_value,
+                    "campaignName": DEMO_CLASS_27_JUN_CAMPAIGN_NAME,
+                    "direction": "OUTBOUND",
+                    "templateName": TEMPLATE_DEMO_CLASS_ONLINE_OFFLINE_27_JUN,
+                    "messagePurpose": "DEMO_CLASS_27_JUN_ONLINE_OFFLINE_REMINDER",
+                    "waMessageId": wa_message_id,
+                    "status": "SENT" if reminder_sent else "FAILED",
+                    "apiResponse": send_result.get("response"),
+                    "error": send_result.get("error"),
+                    "createTime": now,
+                    "updateTime": now,
+                }
+            )
+
+            results.append(
+                {
+                    "name": db_name,
+                    "phone": phone,
+                    "templateDisplayNameSent": template_name_value,
+                    "success": reminder_sent,
+                    "message": (
+                        "Demo class 27 Jun reminder sent"
+                        if reminder_sent
+                        else "Demo class 27 Jun reminder failed"
+                    ),
+                    "waMessageId": wa_message_id,
+                    "error": send_result.get("error"),
+                    "apiResponse": send_result.get("response"),
+                }
+            )
+
+        sent_count = len(
+            [
+                r for r in results
+                if r.get("success") and not r.get("skipped")
+            ]
+        )
+
+        skipped_count = len(
+            [
+                r for r in results
+                if r.get("skipped")
+            ]
+        )
+
+        failed_count = len(
+            [
+                r for r in results
+                if not r.get("success") and not r.get("skipped")
+            ]
+        )
+
+        return {
+            "success": True,
+            "campaignName": DEMO_CLASS_27_JUN_CAMPAIGN_NAME,
+            "templateName": TEMPLATE_DEMO_CLASS_ONLINE_OFFLINE_27_JUN,
+            "templateDisplayNameSent": DEMO_CLASS_27_JUN_TEMPLATE_DISPLAY_NAME,
+            "total": len(payload.leads),
+            "sent": sent_count,
+            "skipped": skipped_count,
+            "failed": failed_count,
+            "results": results
+        }
+
+    except Exception as e:
+        logger.exception(
+            "Failed to send demo class 27 Jun reminder: %s",
+            str(e)
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while sending demo class 27 Jun reminder"
         )

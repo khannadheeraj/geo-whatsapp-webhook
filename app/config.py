@@ -67,6 +67,12 @@ TEMPLATE_UPSC_DEMO_CLASS_REMINDER = "upsc_demo_class_reminder"
 
 FREE_DEMO_CLASS_TEMPLATE_DISPLAY_NAME = "Aspirant"
 
+DEMO_CLASS_27_JUN_CAMPAIGN_NAME = "upsc_demo_class_online_offline_27_jun"
+
+TEMPLATE_DEMO_CLASS_ONLINE_OFFLINE_27_JUN = "upsc_demo_class_online_offline_27_jun"
+
+DEMO_CLASS_27_JUN_TEMPLATE_DISPLAY_NAME = "Aspirants"
+
 ADMIN_USER_EMAIL = os.getenv(
     "ADMIN_USER_EMAIL",
     "admin@gmail.com"
