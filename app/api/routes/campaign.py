@@ -1638,12 +1638,10 @@ async def send_appointment_confirmation(
                 continue
 
             # Send template
-            send_result = send_whatsapp_template(
-                phone=phone,
-                template_name=TEMPLATE_APPOINTMENT_CONFIRMATION_1,
-                name=template_name_value
-            )
-
+                    send_result = send_whatsapp_template(
+            phone=phone,
+            template_name=TEMPLATE_APPOINTMENT_CONFIRMATION_1
+        )
             sent = bool(send_result.get("success"))
             wa_message_id = extract_wa_message_id(send_result)
 
