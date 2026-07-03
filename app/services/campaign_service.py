@@ -13,7 +13,9 @@ from app.config import (
     TEMPLATE_SCHOLARSHIP_MOCK_TEST,
     FREE_DEMO_CLASS_CAMPAIGN_NAME,
     TEMPLATE_FREE_DEMO_CLASS_INVITATION,
-    TEMPLATE_UPSC_DEMO_CLASS_REMINDER
+    TEMPLATE_UPSC_DEMO_CLASS_REMINDER,
+    APPOINTMENT_CONFIRMATION_CAMPAIGN_NAME,
+    TEMPLATE_APPOINTMENT_CONFIRMATION_1
 )
 from app.db.mongodb import get_collection
 from app.services.whatsapp_sender import send_whatsapp_template
@@ -841,6 +843,14 @@ def process_button_click(event: Dict[str, Any]):
     if message_purpose == "FREE_DEMO_CLASS_REMINDER":
         process_free_demo_class_reminder_button_click(...)
         return
+    if message_purpose == "APPOINTMENT_CONFIRMATION_1":
+        
+        process_appointment_confirmation_button_click(
+            event=event,
+            recipient=recipient,
+            outbound_log=outbound_log
+        )
+        return
 
     # ==================================================
     # Old Orientation Invite Campaign
@@ -1076,6 +1086,118 @@ def process_free_demo_class_button_click(
             },
             "$inc": {
                 "freeDemoClassClickCount": 1
+            }
+        }
+    )
+
+
+def normalize_appointment_confirmation_button(
+    button_text: str = "",
+    button_payload: str = ""
+):
+    cleaned_text = (button_text or "").strip().lower()
+    cleaned_payload = (button_payload or "").strip().lower()
+
+    if cleaned_text in [
+        "talk with counsellor",
+        "talk with counselor",
+        "talk to counsellor",
+        "talk to counselor",
+    ] or cleaned_payload in [
+        "talk_with_counsellor",
+        "talk_with_counselor",
+        "talk_to_counsellor",
+        "talk_to_counselor",
+    ]:
+        return {
+            "action": "APPOINTMENT_TALK_COUNSELLOR",
+            "buttonLabel": "Talk with Counsellor"
+        }
+
+    if cleaned_text in [
+        "know more",
+        "know_more",
+    ] or cleaned_payload in [
+        "know_more",
+        "know-more",
+    ]:
+        return {
+            "action": "APPOINTMENT_KNOW_MORE",
+            "buttonLabel": "Know More"
+        }
+
+    return None
+
+
+def process_appointment_confirmation_button_click(
+    event: Dict[str, Any],
+    recipient: Dict[str, Any],
+    outbound_log: Optional[Dict[str, Any]] = None
+):
+    phone = event.get("from")
+    button_text = event.get("buttonText")
+    button_payload = event.get("buttonPayload")
+    now = int(time.time() * 1000)
+
+    if not phone or not (button_text or button_payload):
+        return
+
+    button_action = normalize_appointment_confirmation_button(
+        button_text=button_text,
+        button_payload=button_payload
+    )
+
+    if not button_action:
+        logger.info(
+            "Unknown appointment confirmation button | phone={} buttonText={} buttonPayload={}",
+            phone,
+            button_text,
+            button_payload
+        )
+        return
+
+    campaign_recipients = get_collection("campaign_recipients")
+    appointment_button_clicks = get_collection("appointment_button_clicks")
+
+    if outbound_log is None:
+        outbound_log = get_outbound_log_for_context(event)
+
+    appointment_button_clicks.insert_one({
+        "phone": phone,
+        "name": recipient.get("name", ""),
+        "campaignName": APPOINTMENT_CONFIRMATION_CAMPAIGN_NAME,
+        "templateName": TEMPLATE_APPOINTMENT_CONFIRMATION_1,
+        "messagePurpose": "APPOINTMENT_CONFIRMATION_1",
+        "buttonText": button_text,
+        "buttonPayload": button_payload,
+        "normalizedAction": button_action["action"],
+        "buttonLabel": button_action["buttonLabel"],
+        "contextMessageId": event.get("contextMessageId"),
+        "outboundLogId": outbound_log.get("_id") if outbound_log else None,
+        "waMessageId": event.get("waMessageId"),
+        "rawEvent": event,
+        "createTime": now,
+        "updateTime": now,
+    })
+
+    campaign_recipients.update_one(
+        {
+            "_id": recipient["_id"]
+        },
+        {
+            "$set": {
+                "appointmentLastClickedButton": button_action["buttonLabel"],
+                "appointmentLastClickedAction": button_action["action"],
+                "appointmentLastClickedAt": now,
+                "currentLeadStatus": button_action["action"],
+                "updateTime": now,
+            },
+            "$addToSet": {
+                "appointmentClickedButtons": button_action["buttonLabel"],
+                "appointmentClickedActions": button_action["action"],
+            },
+            "$inc": {
+                "appointmentClickCount": 1
             }
         }
     )

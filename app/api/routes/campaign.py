@@ -23,6 +23,9 @@ from app.config import (
     DEMO_CLASS_27_JUN_CAMPAIGN_NAME,
     TEMPLATE_DEMO_CLASS_ONLINE_OFFLINE_27_JUN,
     DEMO_CLASS_27_JUN_TEMPLATE_DISPLAY_NAME,
+    APPOINTMENT_CONFIRMATION_CAMPAIGN_NAME,
+    TEMPLATE_APPOINTMENT_CONFIRMATION_1,
+    APPOINTMENT_CONFIRMATION_TEMPLATE_DISPLAY_NAME,
 )
 from app.db.mongodb import get_collection
 from app.schemas.campaign_schema import (
@@ -1528,4 +1531,196 @@ async def send_demo_class_27_jun_reminder(
         raise HTTPException(
             status_code=500,
             detail="Something went wrong while sending demo class 27 Jun reminder"
+        )
+
+
+@router.post("/appointment-confirmation/send")
+async def send_appointment_confirmation(
+    payload: CampaignInviteRequestModel
+):
+    try:
+        campaign_recipients = get_collection("campaign_recipients")
+        whatsapp_message_logs = get_collection("whatsapp_message_logs")
+        unsubscribed_users = get_collection("whatsapp_unsubscribed_users")
+
+        results = []
+
+        for lead in payload.leads:
+            now = int(time.time() * 1000)
+
+            # Actual name saved in DB
+            db_name = lead.name.strip() if lead.name else "Aspirant"
+
+            # Template variable {{1}} = Aspirants
+            template_name_value = APPOINTMENT_CONFIRMATION_TEMPLATE_DISPLAY_NAME
+
+            phone = clean_phone_number(lead.phone)
+
+            if not phone:
+                results.append({
+                    "name": db_name,
+                    "phone": lead.phone,
+                    "success": False,
+                    "message": "Phone is required"
+                })
+                continue
+
+            # Skip STOP users
+            existing_unsubscribe = unsubscribed_users.find_one({
+                "phone": phone,
+                "isUnsubscribed": True
+            })
+
+            if existing_unsubscribe:
+                results.append({
+                    "name": db_name,
+                    "phone": phone,
+                    "success": False,
+                    "skipped": True,
+                    "message": "User has unsubscribed"
+                })
+                continue
+
+            # Save / update recipient
+            campaign_recipients.update_one(
+                {
+                    "phone": phone,
+                    "campaignName": APPOINTMENT_CONFIRMATION_CAMPAIGN_NAME
+                },
+                {
+                    "$set": {
+                        "name": db_name,
+                        "phone": phone,
+                        "campaignName": APPOINTMENT_CONFIRMATION_CAMPAIGN_NAME,
+                        "templateName": TEMPLATE_APPOINTMENT_CONFIRMATION_1,
+                        "templateDisplayNameSent": template_name_value,
+                        "updateTime": now,
+                    },
+                    "$setOnInsert": {
+                        "appointmentConfirmationStatus": "PENDING",
+                        "currentLeadStatus": "APPOINTMENT_CONFIRMATION_PENDING",
+
+                        "appointmentClickedButtons": [],
+                        "appointmentClickedActions": [],
+                        "appointmentClickCount": 0,
+                        "appointmentLastClickedButton": None,
+                        "appointmentLastClickedAction": None,
+                        "appointmentLastClickedAt": None,
+
+                        "lastTextMessage": None,
+                        "lastTextMessageAt": None,
+                        "textMessageCount": 0,
+
+                        "createTime": now,
+                    }
+                },
+                upsert=True
+            )
+
+            # Avoid duplicate send
+            existing_recipient = campaign_recipients.find_one({
+                "phone": phone,
+                "campaignName": APPOINTMENT_CONFIRMATION_CAMPAIGN_NAME
+            })
+
+            if (
+                existing_recipient
+                and existing_recipient.get("appointmentConfirmationStatus") == "SENT"
+            ):
+                results.append({
+                    "name": db_name,
+                    "phone": phone,
+                    "success": True,
+                    "skipped": True,
+                    "message": "Appointment confirmation already sent",
+                    "waMessageId": existing_recipient.get("appointmentConfirmationWaMessageId")
+                })
+                continue
+
+            # Send template
+            send_result = send_whatsapp_template(
+                phone=phone,
+                template_name=TEMPLATE_APPOINTMENT_CONFIRMATION_1,
+                name=template_name_value
+            )
+
+            sent = bool(send_result.get("success"))
+            wa_message_id = extract_wa_message_id(send_result)
+
+            now = int(time.time() * 1000)
+
+            campaign_recipients.update_one(
+                {
+                    "phone": phone,
+                    "campaignName": APPOINTMENT_CONFIRMATION_CAMPAIGN_NAME
+                },
+                {
+                    "$set": {
+                        "appointmentConfirmationStatus": "SENT" if sent else "FAILED",
+                        "appointmentConfirmationSentAt": now if sent else None,
+                        "appointmentConfirmationWaMessageId": wa_message_id,
+                        "appointmentConfirmationError": None if sent else send_result.get("error"),
+                        "appointmentConfirmationApiResponse": send_result.get("response"),
+                        "currentLeadStatus": (
+                            "APPOINTMENT_CONFIRMATION_SENT"
+                            if sent
+                            else "APPOINTMENT_CONFIRMATION_FAILED"
+                        ),
+                        "updateTime": now,
+                    }
+                }
+            )
+
+            # Save outbound log
+            whatsapp_message_logs.insert_one({
+                "phone": phone,
+                "name": db_name,
+                "templateDisplayNameSent": template_name_value,
+                "campaignName": APPOINTMENT_CONFIRMATION_CAMPAIGN_NAME,
+                "direction": "OUTBOUND",
+                "templateName": TEMPLATE_APPOINTMENT_CONFIRMATION_1,
+                "messagePurpose": "APPOINTMENT_CONFIRMATION_1",
+                "waMessageId": wa_message_id,
+                "status": "SENT" if sent else "FAILED",
+                "apiResponse": send_result.get("response"),
+                "error": send_result.get("error"),
+                "createTime": now,
+                "updateTime": now,
+            })
+
+            results.append({
+                "name": db_name,
+                "phone": phone,
+                "success": sent,
+                "message": (
+                    "Appointment confirmation sent"
+                    if sent
+                    else "Appointment confirmation failed"
+                ),
+                "waMessageId": wa_message_id,
+                "error": send_result.get("error"),
+                "apiResponse": send_result.get("response"),
+            })
+
+        return {
+            "success": True,
+            "campaignName": APPOINTMENT_CONFIRMATION_CAMPAIGN_NAME,
+            "templateName": TEMPLATE_APPOINTMENT_CONFIRMATION_1,
+            "templateDisplayNameSent": APPOINTMENT_CONFIRMATION_TEMPLATE_DISPLAY_NAME,
+            "total": len(payload.leads),
+            "sent": len([r for r in results if r.get("success") and not r.get("skipped")]),
+            "skipped": len([r for r in results if r.get("skipped")]),
+            "failed": len([r for r in results if not r.get("success") and not r.get("skipped")]),
+            "results": results
+        }
+
+    except Exception as e:
+        logger.exception(
+            "Failed to send appointment confirmation: %s",
+            str(e)
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while sending appointment confirmation"
         )
