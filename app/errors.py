@@ -27,8 +27,18 @@ class AuthorizationError(ApiError):
 
 
 class ConflictError(ApiError):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        field_errors: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(409, code, message, field_errors)
+
+
+class NotFoundError(ApiError):
     def __init__(self, code: str, message: str) -> None:
-        super().__init__(409, code, message)
+        super().__init__(404, code, message)
 
 
 class ValidationApiError(ApiError):

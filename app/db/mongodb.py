@@ -66,11 +66,163 @@ def ensure_auth_indexes() -> None:
     )
 
 
+def ensure_phase1a_indexes() -> None:
+    contacts = get_collection("contacts")
+    preferences = get_collection("contact_preferences")
+    suppressions = get_collection("suppression_entries")
+    leads = get_collection("leads")
+    interests = get_collection("lead_course_interests")
+    assignments = get_collection("lead_assignments")
+    requests = get_collection("reassignment_requests")
+    activities = get_collection("lead_activities")
+
+    contacts.create_index(
+        [("normalizedPhone", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"entityType": "CONTACT"},
+        name="uq_contact_normalized_phone",
+    )
+    contacts.create_index(
+        [("normalizedEmail", ASCENDING)],
+        sparse=True,
+        name="ix_contact_normalized_email",
+    )
+    contacts.create_index(
+        [("source", ASCENDING), ("createdAt", DESCENDING)],
+        name="ix_contact_source_created",
+    )
+    contacts.create_index(
+        [("isActive", ASCENDING), ("createdAt", DESCENDING)],
+        name="ix_contact_active_created",
+    )
+    contacts.create_index(
+        [("normalizedDisplayName", ASCENDING), ("_id", ASCENDING)],
+        name="ix_contact_name",
+    )
+
+    preferences.create_index(
+        [("contactId", ASCENDING), ("channel", ASCENDING)],
+        unique=True,
+        name="uq_contact_preference_channel",
+    )
+    preferences.create_index(
+        [("doNotContact", ASCENDING), ("updatedAt", DESCENDING)],
+        name="ix_preference_dnc_updated",
+    )
+    preferences.create_index(
+        [("marketingAllowed", ASCENDING), ("updatedAt", DESCENDING)],
+        name="ix_preference_marketing_updated",
+    )
+
+    suppressions.create_index(
+        [("normalizedPhone", ASCENDING), ("channel", ASCENDING)],
+        unique=True,
+        name="uq_suppression_phone_channel",
+    )
+    suppressions.create_index(
+        [("isActive", ASCENDING), ("updatedAt", DESCENDING)],
+        name="ix_suppression_active_updated",
+    )
+
+    leads.create_index(
+        [("contactId", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"entityType": "ADMISSION_LEAD", "isActive": True},
+        name="uq_active_admission_lead_per_contact",
+    )
+    leads.create_index(
+        [
+            ("assignedCounsellorId", ASCENDING),
+            ("status", ASCENDING),
+            ("priority", DESCENDING),
+            ("updatedAt", DESCENDING),
+        ],
+        name="ix_lead_owner_status_updated",
+    )
+    leads.create_index(
+        [("status", ASCENDING), ("priority", DESCENDING), ("createdAt", DESCENDING)],
+        name="ix_lead_status_priority_created",
+    )
+    leads.create_index(
+        [("source", ASCENDING), ("createdAt", DESCENDING)],
+        name="ix_lead_source_created",
+    )
+    leads.create_index(
+        [("lastActivityAt", DESCENDING), ("_id", DESCENDING)],
+        name="ix_lead_last_activity",
+    )
+    leads.create_index(
+        [("preferredMode", ASCENDING), ("targetExamYear", ASCENDING)],
+        name="ix_lead_mode_target_year",
+    )
+
+    interests.create_index(
+        [("leadId", ASCENDING), ("isPrimary", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"isPrimary": True},
+        name="uq_primary_course_interest_per_lead",
+    )
+    interests.create_index(
+        [("leadId", ASCENDING), ("createdAt", ASCENDING)],
+        name="ix_course_interest_lead_created",
+    )
+
+    assignments.create_index(
+        [("operationId", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"operationId": {"$exists": True}},
+        name="uq_assignment_operation",
+    )
+    assignments.create_index(
+        [("leadId", ASCENDING), ("assignedAt", DESCENDING)],
+        name="ix_assignment_lead_time",
+    )
+    assignments.create_index(
+        [("toCounsellorId", ASCENDING), ("assignedAt", DESCENDING)],
+        name="ix_assignment_counsellor_time",
+    )
+
+    requests.create_index(
+        [("leadId", ASCENDING), ("status", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"status": "PENDING"},
+        name="uq_pending_reassignment_per_lead",
+    )
+    requests.create_index(
+        [("status", ASCENDING), ("createdAt", ASCENDING)],
+        name="ix_reassignment_status_created",
+    )
+    requests.create_index(
+        [("requestedBy", ASCENDING), ("createdAt", DESCENDING)],
+        name="ix_reassignment_requester_created",
+    )
+
+    activities.create_index(
+        [("operationId", ASCENDING), ("type", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"operationId": {"$exists": True}},
+        name="uq_activity_operation_type",
+    )
+    activities.create_index(
+        [("leadId", ASCENDING), ("createdAt", DESCENDING)],
+        name="ix_activity_lead_created",
+    )
+    activities.create_index(
+        [("contactId", ASCENDING), ("createdAt", DESCENDING)],
+        name="ix_activity_contact_created",
+    )
+    activities.create_index(
+        [("type", ASCENDING), ("createdAt", DESCENDING)],
+        name="ix_activity_type_created",
+    )
+
+
 def connect_to_mongo() -> None:
     global mongo_client, db
 
     if db is not None:
         ensure_auth_indexes()
+        ensure_phase1a_indexes()
         return
     if not MONGODB_URI:
         raise RuntimeError("MongoDB configuration is missing")
@@ -79,7 +231,8 @@ def connect_to_mongo() -> None:
         mongo_client.admin.command("ping")
         db = mongo_client["geo_whatsapp"]
         ensure_auth_indexes()
-        logger.info("MongoDB connected and authentication indexes verified.")
+        ensure_phase1a_indexes()
+        logger.info("MongoDB connected and application indexes verified.")
     except PyMongoError as exc:
         logger.error("MongoDB connection or index validation failed (%s).", type(exc).__name__)
         raise RuntimeError("MongoDB is unavailable") from exc

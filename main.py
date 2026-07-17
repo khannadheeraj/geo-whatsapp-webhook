@@ -7,7 +7,10 @@ from app.api.error_handlers import api_error_handler, request_id_middleware, unh
 from app.api.routes.analytics_router import router as analytics_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.campaign import router as campaign_router
+from app.api.routes.contacts import router as contacts_router
 from app.api.routes.health import router as health_router
+from app.api.routes.leads import router as leads_router
+from app.api.routes.reassignment_requests import router as reassignment_requests_router
 from app.api.routes.template import router as template_router
 from app.api.routes.users import router as users_router
 from app.api.routes.whatsapp_webhook import router as whatsapp_webhook_router
@@ -50,6 +53,9 @@ def shutdown_event():
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(whatsapp_webhook_router)
+app.include_router(contacts_router)
+app.include_router(leads_router)
+app.include_router(reassignment_requests_router)
 app.include_router(template_router, dependencies=[Depends(require_authenticated_user)])
 app.include_router(users_router, dependencies=[Depends(require_super_admin)])
 app.include_router(campaign_router, dependencies=[Depends(require_super_admin)])
