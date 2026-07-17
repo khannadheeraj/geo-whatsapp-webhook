@@ -1,10 +1,13 @@
 from datetime import datetime, timedelta, timezone
+import hashlib
+import hmac
 
 import jwt
 import pytest
 from pymongo.errors import DuplicateKeyError
 
 from app.config import get_security_settings
+from app import config
 from app.errors import ConflictError
 from app.models.user_model import UserRole
 from app.repositories.user_repository import insert_staff_user
@@ -160,7 +163,17 @@ def test_webhook_and_health_remain_public(client, database):
     })
     assert verification.status_code == 200
     assert verification.text == "12345"
-    assert client.post("/webhooks/whatsapp", json={}).status_code == 200
+    raw_body = b"{}"
+    signature = hmac.new(
+        b"test-only-meta-app-secret-32-characters",
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    assert client.post(
+        "/webhooks/whatsapp",
+        content=raw_body,
+        headers={"Content-Type": "application/json", "X-Hub-Signature-256": f"sha256={signature}"},
+    ).status_code == 200
 
 
 def manifest():
@@ -212,3 +225,28 @@ def test_auth_cookie_mutations_reject_untrusted_browser_origin(client, database)
                            json={"emailId": "admin@example.com", "password": PASSWORD})
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "ORIGIN_NOT_ALLOWED"
+
+
+def test_refresh_cookie_uses_http_only_scoped_security_attributes(client, database):
+    make_user(database)
+    response = login(client)
+    cookie = response.headers["set-cookie"].lower()
+    assert "httponly" in cookie
+    assert "samesite=lax" in cookie
+    assert "path=/auth" in cookie
+
+
+def test_production_configuration_requires_meta_secret_and_secure_cookie(monkeypatch):
+    monkeypatch.setattr(config, "ENVIRONMENT", "PROD")
+    monkeypatch.setattr(config, "MONGODB_URI", "mongodb://configuration-test.invalid")
+    monkeypatch.setattr(config, "WHATSAPP_VERIFY_TOKEN", "configured-for-test")
+    monkeypatch.setenv("AUTH_ALLOWED_ORIGINS", "https://crm.example.invalid")
+    monkeypatch.setenv("AUTH_COOKIE_SECURE", "true")
+    monkeypatch.setattr(config, "WHATSAPP_APP_SECRET", "")
+    with pytest.raises(RuntimeError, match="WHATSAPP_APP_SECRET"):
+        config.validate_security_configuration()
+
+    monkeypatch.setattr(config, "WHATSAPP_APP_SECRET", "test-only-meta-app-secret-32-characters")
+    monkeypatch.setenv("AUTH_COOKIE_SECURE", "false")
+    with pytest.raises(RuntimeError, match="AUTH_COOKIE_SECURE"):
+        config.validate_security_configuration()

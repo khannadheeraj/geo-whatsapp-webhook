@@ -1,3 +1,4 @@
+import json
 import time
 
 from fastapi import APIRouter, Request, HTTPException
@@ -11,6 +12,7 @@ from app.services.campaign_service import (
     process_button_click,
     process_text_message,
 )
+from app.services.webhook_signature_service import verify_meta_webhook_signature
 
 
 router = APIRouter(
@@ -52,8 +54,14 @@ async def verify_whatsapp_webhook(request: Request):
 @router.post("/whatsapp")
 async def receive_whatsapp_webhook(request: Request):
 
+    raw_body = await request.body()
+    verify_meta_webhook_signature(
+        raw_body,
+        request.headers.get("X-Hub-Signature-256"),
+    )
+
     try:
-        payload = await request.json()
+        payload = json.loads(raw_body)
 
         logger.info("WhatsApp webhook payload received")
 
@@ -120,10 +128,7 @@ async def receive_whatsapp_webhook(request: Request):
             # - Scholarship mock test buttons
             if button_text:
                 logger.info(
-                    "Processing button click | from={} buttonText={} contextMessageId={}",
-                    event.get("from"),
-                    button_text,
-                    event.get("contextMessageId")
+                    "Processing verified WhatsApp button event"
                 )
 
                 process_button_click(event)
@@ -133,10 +138,7 @@ async def receive_whatsapp_webhook(request: Request):
             # Example: "I want to join", "Please call me", etc.
             if message_type == "text" and text:
                 logger.info(
-                    "Processing text message | from={} text={} contextMessageId={}",
-                    event.get("from"),
-                    text,
-                    event.get("contextMessageId")
+                    "Processing verified WhatsApp text event"
                 )
 
                 process_text_message(event)
@@ -146,11 +148,11 @@ async def receive_whatsapp_webhook(request: Request):
             "status": "ok"
         }
 
-    except Exception as e:
+    except Exception as exc:
 
         logger.exception(
-            "Failed to process WhatsApp webhook payload: {}",
-            str(e)
+            "Failed to process verified WhatsApp webhook | error_type={}",
+            type(exc).__name__
         )
 
         # Important:

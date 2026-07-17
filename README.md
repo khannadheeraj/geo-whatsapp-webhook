@@ -6,11 +6,19 @@ FastAPI backend for the GEO IAS CRM. The existing MongoDB, Meta configuration, w
 
 1. Create and activate a Python virtual environment.
 2. Install `requirements.txt`; install `requirements-dev.txt` for tests.
-3. Copy the names from `.env.example` into a local `.env` without committing it.
-4. Configure a random `JWT_SECRET_KEY` of at least 32 characters and an explicit `AUTH_ALLOWED_ORIGINS` list.
+3. For local development only, use `.env.example` as a required-name reference and place local values in an uncommitted `.env` or process environment.
+4. Configure a random `JWT_SECRET_KEY` and Meta `WHATSAPP_APP_SECRET`, each at least 32 characters, plus an explicit `AUTH_ALLOWED_ORIGINS` list.
 5. Run `uvicorn main:app --reload`.
 
 `ADMIN_USER_EMAIL` and `ADMIN_USER_PASSWORD` are retained in `.env.example` as deprecated names so existing deployment configuration is not renamed. They are intentionally ignored; no plaintext account is created or authenticated from them.
+
+Production does not require or expect a production `.env` file. All production values are read from the existing process/service environment. Its exact delivery mechanism—such as systemd, a process manager, server exports, a deployment panel, or CI/CD—must be verified on the server and is not changed by this application.
+
+## Meta webhook signature verification
+
+`POST /webhooks/whatsapp` requires Meta's `X-Hub-Signature-256` header. The backend computes HMAC-SHA256 over the exact raw request bytes using `WHATSAPP_APP_SECRET` and compares the digest in constant time before parsing JSON. Missing, malformed, or invalid signatures receive a generic `401` response and are never processed or stored. `GET /webhooks/whatsapp` challenge verification continues using `WHATSAPP_VERIFY_TOKEN`.
+
+Signature verification has no implicit bypass. Startup fails when `WHATSAPP_APP_SECRET` is missing or shorter than 32 characters. Tests use an isolated non-production value; production must supply the actual secret through the existing service environment.
 
 ## Secure initial-user bootstrap
 

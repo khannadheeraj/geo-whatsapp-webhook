@@ -110,16 +110,14 @@ def send_whatsapp_template(
             "response": response_data
         }
 
-    except Exception as e:
+    except Exception as exc:
         logger.exception(
-            "Exception while sending WhatsApp template | phone=%s template=%s error=%s",
-            phone,
-            template_name,
-            str(e)
+            "WhatsApp template request failed | error_type=%s",
+            type(exc).__name__
         )
 
         return {
             "success": False,
-            "error": str(e),
+            "error": "WHATSAPP_REQUEST_FAILED",
             "response": None
         }

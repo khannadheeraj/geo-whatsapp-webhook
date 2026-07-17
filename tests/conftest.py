@@ -5,6 +5,7 @@ os.environ["JWT_SECRET_KEY"] = "test-only-secret-key-at-least-32-characters"
 os.environ["AUTH_ALLOWED_ORIGINS"] = "http://localhost:3000"
 os.environ["AUTH_COOKIE_SECURE"] = "false"
 os.environ["WHATSAPP_VERIFY_TOKEN"] = "test-webhook-verification-token"
+os.environ["WHATSAPP_APP_SECRET"] = "test-only-meta-app-secret-32-characters"
 
 import mongomock
 import pytest

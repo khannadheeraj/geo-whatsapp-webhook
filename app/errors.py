@@ -34,3 +34,8 @@ class ConflictError(ApiError):
 class ValidationApiError(ApiError):
     def __init__(self, code: str, message: str, field_errors: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(422, code, message, field_errors)
+
+
+class WebhookSignatureError(ApiError):
+    def __init__(self) -> None:
+        super().__init__(401, "WEBHOOK_SIGNATURE_INVALID", "Webhook signature validation failed.")

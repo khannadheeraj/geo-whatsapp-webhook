@@ -44,6 +44,7 @@ WHATSAPP_VERIFY_TOKEN = _clean_env("WHATSAPP_VERIFY_TOKEN")
 WHATSAPP_ACCESS_TOKEN = _clean_env("WHATSAPP_ACCESS_TOKEN")
 WHATSAPP_PHONE_NUMBER_ID = _clean_env("WHATSAPP_PHONE_NUMBER_ID")
 WHATSAPP_WABA_ID = _clean_env("WHATSAPP_WABA_ID")
+WHATSAPP_APP_SECRET = _clean_env("WHATSAPP_APP_SECRET")
 WHATSAPP_GRAPH_API_VERSION = "v20.0"
 
 TEMPLATE_LANGUAGE_CODE = "en_US"
@@ -115,6 +116,8 @@ def get_security_settings() -> SecuritySettings:
 
 def validate_security_configuration() -> SecuritySettings:
     settings = get_security_settings()
+    if ENVIRONMENT not in {"LOCAL", "TEST", "DEV", "PROD", "PRODUCTION"}:
+        raise RuntimeError("ENVIRONMENT must identify a supported deployment environment")
     if len(settings.jwt_secret_key) < 32:
         raise RuntimeError("JWT_SECRET_KEY must be configured with at least 32 characters")
     if settings.jwt_secret_key.lower() in {
@@ -137,8 +140,16 @@ def validate_security_configuration() -> SecuritySettings:
         raise RuntimeError("AUTH_COOKIE_SECURE must be true when SameSite is none")
     if not settings.allowed_origins or "*" in settings.allowed_origins:
         raise RuntimeError("AUTH_ALLOWED_ORIGINS must list explicit origins")
+    if ENVIRONMENT in {"DEV", "PROD", "PRODUCTION"} and not _clean_env("AUTH_ALLOWED_ORIGINS"):
+        raise RuntimeError("AUTH_ALLOWED_ORIGINS must be explicitly configured")
+    if ENVIRONMENT in {"DEV", "PROD", "PRODUCTION"} and not settings.refresh_cookie_secure:
+        raise RuntimeError("AUTH_COOKIE_SECURE must be true outside local/test environments")
     if ENVIRONMENT in {"DEV", "PROD", "PRODUCTION"} and not MONGODB_URI:
         raise RuntimeError("MONGODB_URI must be configured")
     if ENVIRONMENT in {"DEV", "PROD", "PRODUCTION"} and not WHATSAPP_VERIFY_TOKEN:
         raise RuntimeError("WHATSAPP_VERIFY_TOKEN must be configured")
+    if len(WHATSAPP_APP_SECRET) < 32:
+        raise RuntimeError("WHATSAPP_APP_SECRET must be configured with at least 32 characters")
+    if WHATSAPP_APP_SECRET.lower() in {"change-me", "changeme", "placeholder"}:
+        raise RuntimeError("WHATSAPP_APP_SECRET uses a prohibited placeholder value")
     return settings

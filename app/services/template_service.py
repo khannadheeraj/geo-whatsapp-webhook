@@ -85,9 +85,8 @@ def get_templates():
 
     if response.status_code >= 400:
         logger.error(
-            "Failed to fetch WhatsApp templates | status=%s response=%s",
-            response.status_code,
-            data
+            "Failed to fetch WhatsApp templates | status=%s",
+            response.status_code
         )
         raise RuntimeError("WHATSAPP_TEMPLATE_FETCH_FAILED")
 
