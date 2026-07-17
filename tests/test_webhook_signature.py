@@ -27,8 +27,7 @@ def test_valid_signature_allows_webhook_processing(client, database):
     response = post_raw(client, raw_body, signature_for(raw_body))
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
-    stored = database.raw_webhooks.find_one()
-    assert stored["payload"] == json.loads(raw_body)
+    assert database.raw_webhooks.count_documents({}) == 0
 
 
 def test_invalid_signature_is_rejected_with_safe_error(client, database):
@@ -72,7 +71,7 @@ def test_signature_is_checked_against_exact_raw_body(client, database):
     assert rejected.status_code == 401
     accepted = post_raw(client, spaced_body, signature_for(spaced_body))
     assert accepted.status_code == 200
-    assert database.raw_webhooks.count_documents({}) == 1
+    assert database.raw_webhooks.count_documents({}) == 0
 
 
 def test_verified_payload_reaches_existing_extractor_and_handler(client, database, monkeypatch):
@@ -81,6 +80,8 @@ def test_verified_payload_reaches_existing_extractor_and_handler(client, databas
     processed_events = []
     event = {
         "eventType": "incoming_message",
+        "eventKey": "message:sentinel-id",
+        "waMessageId": "sentinel-id",
         "messageType": "text",
         "text": "sentinel-message-text",
         "from": "919999999999",
@@ -91,13 +92,13 @@ def test_verified_payload_reaches_existing_extractor_and_handler(client, databas
         return [event]
 
     monkeypatch.setattr(webhook_route, "extract_whatsapp_events", fake_extract)
+    monkeypatch.setattr(webhook_route, "process_extracted_event", lambda value: True)
     monkeypatch.setattr(webhook_route, "process_text_message", processed_events.append)
 
     response = post_raw(client, raw_body, signature_for(raw_body))
     assert response.status_code == 200
     assert received_payloads == [json.loads(raw_body)]
     assert processed_events == [event]
-    assert database.whatsapp_events.find_one({"text": "sentinel-message-text"}) is not None
 
 
 def test_app_secret_signature_and_raw_payload_do_not_appear_in_errors_or_logs(client, caplog, capsys):

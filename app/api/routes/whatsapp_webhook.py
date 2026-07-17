@@ -1,13 +1,12 @@
 import json
-import time
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import PlainTextResponse
 from loguru import logger
 
 from app.config import WHATSAPP_VERIFY_TOKEN
-from app.db.mongodb import get_collection
 from app.services.whatsapp_extractor import extract_whatsapp_events
+from app.services.whatsapp_message_service import process_extracted_event
 from app.services.campaign_service import (
     process_button_click,
     process_text_message,
@@ -65,24 +64,6 @@ async def receive_whatsapp_webhook(request: Request):
 
         logger.info("WhatsApp webhook payload received")
 
-        raw_webhooks = get_collection("raw_webhooks")
-        whatsapp_events = get_collection("whatsapp_events")
-
-        now = int(time.time() * 1000)
-
-        # ==========================================
-        # Save Raw Webhook Payload
-        # ==========================================
-
-        raw_webhooks.insert_one(
-            {
-                "source": "whatsapp",
-                "payload": payload,
-                "createTime": now,
-                "updateTime": now,
-            }
-        )
-
         # ==========================================
         # Extract Events
         # ==========================================
@@ -95,22 +76,9 @@ async def receive_whatsapp_webhook(request: Request):
                 "status": "ok"
             }
 
-        # ==========================================
-        # Save Extracted Events
-        # ==========================================
-
-        whatsapp_events.insert_many(extracted_events)
-
-        logger.info(
-            "Saved {} WhatsApp event(s) to MongoDB.",
-            len(extracted_events)
-        )
-
-        # ==========================================
-        # Process Incoming Messages
-        # ==========================================
-
         for event in extracted_events:
+
+            is_new_inbound = process_extracted_event(event)
 
             event_type = event.get("eventType")
             message_type = event.get("messageType")
@@ -119,7 +87,7 @@ async def receive_whatsapp_webhook(request: Request):
 
             # We currently process only incoming user messages here.
             # Status events like sent/delivered/read/failed are only stored for now.
-            if event_type != "incoming_message":
+            if event_type != "incoming_message" or not is_new_inbound:
                 continue
 
             # Button clicks:

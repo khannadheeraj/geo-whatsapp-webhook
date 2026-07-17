@@ -249,6 +249,60 @@ def ensure_phase1b_indexes() -> None:
     )
 
 
+def ensure_phase2a_indexes() -> None:
+    conversations = get_collection("conversations")
+    messages = get_collection("whatsapp_messages")
+    compatibility_events = get_collection("whatsapp_events")
+    failure_details = get_collection("whatsapp_failure_details")
+
+    conversations.create_index(
+        [("channel", ASCENDING), ("phoneNumberId", ASCENDING), ("normalizedPhone", ASCENDING)],
+        unique=True,
+        name="uq_whatsapp_conversation_phone",
+    )
+    conversations.create_index(
+        [("contactId", ASCENDING), ("latestMessageAt", DESCENDING)],
+        name="ix_whatsapp_conversation_contact_latest",
+    )
+    conversations.create_index(
+        [("reconciliationStatus", ASCENDING), ("latestInboundAt", DESCENDING)],
+        name="ix_whatsapp_conversation_reconciliation",
+    )
+    messages.create_index(
+        [("providerMessageId", ASCENDING)],
+        unique=True,
+        name="uq_whatsapp_message_provider_id",
+    )
+    messages.create_index(
+        [("conversationId", ASCENDING), ("createdAt", DESCENDING)],
+        name="ix_whatsapp_message_conversation_created",
+    )
+    messages.create_index(
+        [("contactId", ASCENDING), ("createdAt", DESCENDING)],
+        name="ix_whatsapp_message_contact_created",
+    )
+    messages.create_index(
+        [("status", ASCENDING), ("failedAt", DESCENDING)],
+        name="ix_whatsapp_message_status_failed",
+    )
+    compatibility_events.create_index(
+        [("eventKey", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"eventKey": {"$exists": True}},
+        name="uq_whatsapp_event_key",
+    )
+    failure_details.create_index(
+        [("eventKey", ASCENDING)],
+        unique=True,
+        name="uq_whatsapp_failure_event",
+    )
+    failure_details.create_index(
+        [("expiresAt", ASCENDING)],
+        expireAfterSeconds=0,
+        name="ttl_whatsapp_failure_details",
+    )
+
+
 def connect_to_mongo() -> None:
     global mongo_client, db
 
@@ -256,6 +310,7 @@ def connect_to_mongo() -> None:
         ensure_auth_indexes()
         ensure_phase1a_indexes()
         ensure_phase1b_indexes()
+        ensure_phase2a_indexes()
         return
     if not MONGODB_URI:
         raise RuntimeError("MongoDB configuration is missing")
@@ -266,6 +321,7 @@ def connect_to_mongo() -> None:
         ensure_auth_indexes()
         ensure_phase1a_indexes()
         ensure_phase1b_indexes()
+        ensure_phase2a_indexes()
         logger.info("MongoDB connected and application indexes verified.")
     except PyMongoError as exc:
         logger.error("MongoDB connection or index validation failed (%s).", type(exc).__name__)

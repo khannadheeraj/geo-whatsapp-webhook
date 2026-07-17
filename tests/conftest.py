@@ -11,7 +11,13 @@ import mongomock
 import pytest
 from fastapi.testclient import TestClient
 
-from app.db.mongodb import ensure_auth_indexes, ensure_phase1a_indexes, ensure_phase1b_indexes, set_database_for_testing
+from app.db.mongodb import (
+    ensure_auth_indexes,
+    ensure_phase1a_indexes,
+    ensure_phase1b_indexes,
+    ensure_phase2a_indexes,
+    set_database_for_testing,
+)
 from main import app
 
 
@@ -22,6 +28,7 @@ def database():
     ensure_auth_indexes()
     ensure_phase1a_indexes()
     ensure_phase1b_indexes()
+    ensure_phase2a_indexes()
     return database
 
 
