@@ -3,7 +3,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.errors import AuthorizationError, ConflictError, NotFoundError, ValidationApiError
 from app.models.crm_model import ActivityType, ReassignmentStatus
 from app.models.user_model import UserRole
-from app.repositories.lead_repository import find_lead_by_id
+from app.repositories.lead_repository import find_lead_by_id, find_leads_by_ids
+from app.repositories.contact_repository import find_contacts_by_ids
+from app.repositories.user_repository import find_staff_users_by_ids
 from app.repositories.reassignment_repository import (
     claim_reassignment_approval,
     decide_reassignment_request,
@@ -110,6 +112,27 @@ def list_reassignment_requests(
     if lead_id:
         query["leadId"] = object_id_or_not_found(lead_id, "lead")
     return repository_list_requests(query, page=page, page_size=page_size)
+
+
+def reassignment_list_context(
+    requests: List[Dict[str, Any]],
+) -> Dict[str, Dict[Any, Dict[str, Any]]]:
+    leads = find_leads_by_ids([item["leadId"] for item in requests])
+    contacts = find_contacts_by_ids([lead["contactId"] for lead in leads])
+    user_ids = set()
+    for item in requests:
+        user_ids.add(item.get("requestedBy"))
+        user_ids.add(item.get("requestedTargetCounsellorId"))
+        user_ids.add(item.get("decidedBy"))
+        user_ids.add(item.get("approvedCounsellorId"))
+    for lead in leads:
+        user_ids.add(lead.get("assignedCounsellorId"))
+    users = find_staff_users_by_ids([item for item in user_ids if item])
+    return {
+        "leads": {item["_id"]: item for item in leads},
+        "contacts": {item["_id"]: item for item in contacts},
+        "users": {item["_id"]: item for item in users},
+    }
 
 
 def cancel_reassignment_request(

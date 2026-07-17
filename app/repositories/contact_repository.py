@@ -34,6 +34,41 @@ def find_contact_by_normalized_phone(normalized_phone: str) -> Optional[Dict[str
     )
 
 
+def find_contacts_by_ids(contact_ids: List[ObjectId]) -> List[Dict[str, Any]]:
+    if not contact_ids:
+        return []
+    return list(
+        get_collection("contacts").find(
+            {"_id": {"$in": contact_ids}, "entityType": CONTACT_ENTITY_TYPE}
+        )
+    )
+
+
+def search_contact_ids(search: str) -> List[ObjectId]:
+    cleaned = " ".join((search or "").strip().split())
+    if not cleaned:
+        return []
+    import re
+
+    digits = re.sub(r"\D", "", cleaned)
+    alternatives: List[Dict[str, Any]] = [
+        {"normalizedDisplayName": {"$regex": re.escape(cleaned.casefold())}},
+        {"normalizedEmail": {"$regex": re.escape(cleaned.casefold())}},
+    ]
+    if digits:
+        alternatives.extend(
+            [
+                {"normalizedPhone": {"$regex": re.escape(digits)}},
+                {"normalizedAlternatePhone": {"$regex": re.escape(digits)}},
+            ]
+        )
+    return list(
+        get_collection("contacts").distinct(
+            "_id", {"entityType": CONTACT_ENTITY_TYPE, "$or": alternatives}
+        )
+    )
+
+
 def update_contact(
     contact_id: ObjectId,
     version: int,

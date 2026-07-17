@@ -141,12 +141,12 @@ def test_role_enforcement_and_anonymous_rejection(client, database):
     admin = make_user(database)
     counsellor = make_user(database, "counsellor@example.com", UserRole.COUNSELLOR.value)
     assert admin and counsellor
-    anonymous = client.get("/users/all")
+    anonymous = client.get("/users")
     assert anonymous.status_code == 401
     counsellor_login = login(client, "counsellor@example.com")
-    assert client.get("/users/all", headers=auth_header(counsellor_login)).status_code == 403
+    assert client.get("/users", headers=auth_header(counsellor_login)).status_code == 403
     admin_login = login(client)
-    assert client.get("/users/all", headers=auth_header(admin_login)).status_code == 200
+    assert client.get("/users", headers=auth_header(admin_login)).status_code == 200
 
 
 def test_authenticated_template_route_accepts_both_roles(client, database, monkeypatch):

@@ -8,6 +8,8 @@ from app.api.routes.analytics_router import router as analytics_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.campaign import router as campaign_router
 from app.api.routes.contacts import router as contacts_router
+from app.api.routes.contact_imports import router as contact_imports_router
+from app.api.routes.dashboard import router as dashboard_router
 from app.api.routes.health import router as health_router
 from app.api.routes.leads import router as leads_router
 from app.api.routes.reassignment_requests import router as reassignment_requests_router
@@ -35,7 +37,7 @@ app.add_middleware(
     allow_origins=list(settings.allowed_origins),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "Idempotency-Key"],
 )
 
 
@@ -54,9 +56,11 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(whatsapp_webhook_router)
 app.include_router(contacts_router)
+app.include_router(contact_imports_router)
+app.include_router(dashboard_router)
 app.include_router(leads_router)
 app.include_router(reassignment_requests_router)
 app.include_router(template_router, dependencies=[Depends(require_authenticated_user)])
-app.include_router(users_router, dependencies=[Depends(require_super_admin)])
+app.include_router(users_router)
 app.include_router(campaign_router, dependencies=[Depends(require_super_admin)])
 app.include_router(analytics_router, dependencies=[Depends(require_super_admin)])

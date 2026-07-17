@@ -41,6 +41,16 @@ class NotFoundError(ApiError):
         super().__init__(404, code, message)
 
 
+class GoneError(ApiError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(410, code, message)
+
+
+class PayloadTooLargeError(ApiError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(413, code, message)
+
+
 class ValidationApiError(ApiError):
     def __init__(self, code: str, message: str, field_errors: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(422, code, message, field_errors)

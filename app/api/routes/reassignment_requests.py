@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from app.api.dependencies.auth import require_authenticated_user, require_super_admin
 from app.api.response_helpers import list_response
 from app.models.crm_model import ReassignmentStatus
+from app.models.user_model import public_user
 from app.schemas.reassignment_schema import (
     ReassignmentApproveModel,
     ReassignmentCreateModel,
@@ -15,6 +16,7 @@ from app.services.reassignment_service import (
     cancel_reassignment_request,
     create_reassignment_request,
     list_reassignment_requests,
+    reassignment_list_context,
     reject_reassignment_request,
 )
 from app.utils.mongo_utils import public_document
@@ -49,7 +51,26 @@ async def list_reassignment_requests_route(
         status=statusValue.value if statusValue else None,
         lead_id=leadId,
     )
-    return list_response(documents, page, pageSize, total)
+    context = reassignment_list_context(documents)
+    data = []
+    for document in documents:
+        item = public_document(document)
+        lead = context["leads"].get(document["leadId"])
+        contact = context["contacts"].get(lead.get("contactId")) if lead else None
+        item["lead"] = public_document(lead)
+        item["contact"] = public_document(contact)
+        for source_field, response_field in (
+            ("requestedBy", "requester"),
+            ("requestedTargetCounsellorId", "requestedCounsellor"),
+            ("approvedCounsellorId", "approvedCounsellor"),
+            ("decidedBy", "decidedByUser"),
+        ):
+            related = context["users"].get(document.get(source_field))
+            item[response_field] = public_user(related) if related else None
+        current_owner = context["users"].get(lead.get("assignedCounsellorId")) if lead else None
+        item["currentCounsellor"] = public_user(current_owner) if current_owner else None
+        data.append(item)
+    return {"data": data, "pagination": list_response([], page, pageSize, total)["pagination"]}
 
 
 @router.post("/reassignment-requests/{requestId}/approve")

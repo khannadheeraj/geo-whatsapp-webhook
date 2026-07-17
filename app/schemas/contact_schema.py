@@ -2,6 +2,8 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.models.crm_model import LeadPriority, LeadStatus, PreferredMode
+
 
 class ContactCreateModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -22,6 +24,12 @@ class ContactCreateModel(BaseModel):
     sourceDetails: Optional[str] = Field(default=None, max_length=500)
     notes: Optional[str] = Field(default=None, max_length=2000)
     createLead: bool = True
+    leadStatus: LeadStatus = LeadStatus.NEW
+    leadPriority: LeadPriority = LeadPriority.MEDIUM
+    preferredMode: Optional[PreferredMode] = None
+    targetExamYear: Optional[int] = Field(default=None, ge=2020, le=2100)
+    assignedCounsellorId: Optional[str] = Field(default=None, min_length=24, max_length=24)
+    courseInterest: Optional[str] = Field(default=None, max_length=200)
 
 
 class ContactPatchModel(BaseModel):

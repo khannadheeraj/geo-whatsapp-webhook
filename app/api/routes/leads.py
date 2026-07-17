@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from app.api.dependencies.auth import require_authenticated_user, require_super_admin
 from app.api.response_helpers import list_response
 from app.models.crm_model import ActivityType, LeadPriority, LeadStatus, PreferredMode
+from app.models.user_model import public_user
 from app.repositories.activity_repository import list_lead_activities
 from app.repositories.lead_repository import list_assignment_history
 from app.schemas.lead_schema import LeadAssignmentModel, LeadCreateModel, LeadPatchModel
@@ -15,6 +16,7 @@ from app.services.lead_service import (
     get_lead,
     get_lead_detail,
     list_leads,
+    lead_list_context,
     patch_lead,
 )
 from app.utils.mongo_utils import public_document
@@ -44,6 +46,7 @@ async def list_leads_route(
     source: Optional[str] = Query(default=None, max_length=100),
     preferredMode: Optional[PreferredMode] = None,
     targetYear: Optional[int] = Query(default=None, ge=2020, le=2100),
+    search: Optional[str] = Query(default=None, max_length=200),
     createdFrom: Optional[datetime] = None,
     createdTo: Optional[datetime] = None,
     lastActivityFrom: Optional[datetime] = None,
@@ -62,13 +65,22 @@ async def list_leads_route(
         source=source,
         preferred_mode=preferredMode.value if preferredMode else None,
         target_year=targetYear,
+        search=search,
         created_from=createdFrom,
         created_to=createdTo,
         activity_from=lastActivityFrom,
         activity_to=lastActivityTo,
         sort=sort,
     )
-    return list_response(documents, page, pageSize, total)
+    contacts, owners = lead_list_context(documents)
+    data = []
+    for document in documents:
+        item = public_document(document)
+        item["contact"] = public_document(contacts.get(document["contactId"]))
+        owner = owners.get(document.get("assignedCounsellorId"))
+        item["assignedCounsellor"] = public_user(owner) if owner else None
+        data.append(item)
+    return {"data": data, "pagination": list_response([], page, pageSize, total)["pagination"]}
 
 
 @router.get("/{leadId}")
@@ -83,6 +95,9 @@ async def get_lead_route(
             "contact": public_document(result["contact"]),
             "preferences": public_document(result["preferences"]),
             "courseInterests": [public_document(item) for item in result["courseInterests"]],
+            "assignedCounsellor": public_user(result["assignedCounsellor"])
+            if result["assignedCounsellor"]
+            else None,
         }
     }
 

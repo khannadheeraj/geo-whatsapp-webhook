@@ -41,3 +41,24 @@ def list_lead_activities(
         .limit(page_size)
     )
     return documents, total
+
+
+def list_contact_activities(
+    contact_id: ObjectId,
+    *,
+    page: int,
+    page_size: int,
+    activity_type: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], int]:
+    query: Dict[str, Any] = {"contactId": contact_id}
+    if activity_type:
+        query["type"] = activity_type
+    collection = get_collection("lead_activities")
+    total = collection.count_documents(query)
+    documents = list(
+        collection.find(query)
+        .sort([("createdAt", -1), ("_id", -1)])
+        .skip((page - 1) * page_size)
+        .limit(page_size)
+    )
+    return documents, total

@@ -2,6 +2,7 @@ import re
 from typing import Optional
 
 from app.errors import ValidationApiError
+from app.models.crm_model import LeadSource
 
 
 _EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -41,3 +42,29 @@ def normalize_code(value: Optional[str]) -> Optional[str]:
     if cleaned is None:
         return None
     return re.sub(r"[^A-Z0-9]+", "_", cleaned.upper()).strip("_") or None
+
+
+_SOURCE_ALIASES = {
+    "ADMIN_MANUAL_ENTRY": LeadSource.MANUAL_ENTRY.value,
+    "MANUAL_ENQUIRY": LeadSource.MANUAL_ENTRY.value,
+    "MANUAL": LeadSource.MANUAL_ENTRY.value,
+    "EXCEL": LeadSource.EXCEL_IMPORT.value,
+    "XLSX": LeadSource.EXCEL_IMPORT.value,
+    "CSV": LeadSource.CSV_IMPORT.value,
+    "META_LEAD_AD": LeadSource.META_LEAD_FORM.value,
+    "WEBSITE_ENQUIRY": LeadSource.WEBSITE.value,
+}
+
+
+def normalize_lead_source(value: Optional[str], *, default: Optional[str] = None) -> Optional[str]:
+    normalized = normalize_code(value) or default
+    if normalized is None:
+        return None
+    normalized = _SOURCE_ALIASES.get(normalized, normalized)
+    if normalized not in {item.value for item in LeadSource}:
+        raise ValidationApiError(
+            "LEAD_SOURCE_INVALID",
+            "Choose a supported lead source.",
+            {"source": "Choose a supported lead source."},
+        )
+    return normalized

@@ -20,4 +20,7 @@ def public_user(user: Dict[str, Any]) -> Dict[str, Any]:
         "isActive": bool(user.get("isActive", False)),
         "mustChangePassword": bool(user.get("mustChangePassword", False)),
         "lastLoginAt": user.get("lastLoginAt"),
+        "createdAt": user.get("createdAt"),
+        "updatedAt": user.get("updatedAt"),
+        "version": int(user.get("version", 1)),
     }

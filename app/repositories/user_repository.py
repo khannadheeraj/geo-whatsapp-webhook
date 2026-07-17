@@ -1,8 +1,9 @@
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from bson import ObjectId
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from app.db.mongodb import get_collection
@@ -44,6 +45,16 @@ def find_staff_user_by_id(user_id: Any) -> Optional[Dict[str, Any]]:
     )
 
 
+def find_staff_users_by_ids(user_ids: List[ObjectId]) -> List[Dict[str, Any]]:
+    if not user_ids:
+        return []
+    return list(
+        get_collection("users").find(
+            {"_id": {"$in": user_ids}, "entityType": STAFF_USER_ENTITY_TYPE}
+        )
+    )
+
+
 def insert_staff_user(document: Dict[str, Any]) -> Dict[str, Any]:
     now = utc_now()
     user_document = {
@@ -54,6 +65,7 @@ def insert_staff_user(document: Dict[str, Any]) -> Dict[str, Any]:
         "isActive": bool(document.get("isActive", True)),
         "mustChangePassword": bool(document.get("mustChangePassword", True)),
         "credentialVersion": int(document.get("credentialVersion", 1)),
+        "version": int(document.get("version", 1)),
         "createdAt": document.get("createdAt", now),
         "updatedAt": document.get("updatedAt", now),
     }
@@ -93,4 +105,71 @@ def replace_password_hash(user_id: Any, password_hash: str) -> None:
     get_collection("users").update_one(
         {"_id": ObjectId(str(user_id)), "entityType": STAFF_USER_ENTITY_TYPE},
         {"$set": {"passwordHash": password_hash, "updatedAt": utc_now()}},
+    )
+
+
+def list_staff_users(
+    query: Dict[str, Any], *, page: int, page_size: int
+) -> Tuple[List[Dict[str, Any]], int]:
+    collection = get_collection("users")
+    full_query = {"entityType": STAFF_USER_ENTITY_TYPE, **query}
+    total = collection.count_documents(full_query)
+    documents = list(
+        collection.find(full_query)
+        .sort([("displayName", 1), ("_id", 1)])
+        .skip((page - 1) * page_size)
+        .limit(page_size)
+    )
+    return documents, total
+
+
+def update_staff_user(
+    user_id: Any,
+    version: int,
+    updates: Dict[str, Any],
+    *,
+    increment_credentials: bool = False,
+) -> Optional[Dict[str, Any]]:
+    object_id = user_id if isinstance(user_id, ObjectId) else ObjectId(str(user_id))
+    version_query: Dict[str, Any] = {"version": version}
+    if version == 1:
+        version_query = {"$or": [{"version": 1}, {"version": {"$exists": False}}]}
+    update_document: Dict[str, Any] = {"$set": updates, "$inc": {"version": 1}}
+    if increment_credentials:
+        update_document["$inc"]["credentialVersion"] = 1
+    try:
+        return get_collection("users").find_one_and_update(
+            {"_id": object_id, "entityType": STAFF_USER_ENTITY_TYPE, **version_query},
+            update_document,
+            return_document=ReturnDocument.AFTER,
+        )
+    except DuplicateKeyError as exc:
+        raise ConflictError("USER_EMAIL_DUPLICATE", "A user with this email already exists.") from exc
+
+
+def reset_staff_password(user_id: Any, password_hash: str) -> Optional[Dict[str, Any]]:
+    now = utc_now()
+    object_id = user_id if isinstance(user_id, ObjectId) else ObjectId(str(user_id))
+    return get_collection("users").find_one_and_update(
+        {"_id": object_id, "entityType": STAFF_USER_ENTITY_TYPE},
+        {
+            "$set": {
+                "passwordHash": password_hash,
+                "mustChangePassword": True,
+                "passwordChangedAt": now,
+                "updatedAt": now,
+            },
+            "$inc": {"credentialVersion": 1, "version": 1},
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+
+
+def count_active_super_admins() -> int:
+    return get_collection("users").count_documents(
+        {
+            "entityType": STAFF_USER_ENTITY_TYPE,
+            "role": "SUPER_ADMIN",
+            "isActive": True,
+        }
     )

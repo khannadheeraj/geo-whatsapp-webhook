@@ -27,6 +27,16 @@ def find_lead_by_id(lead_id: ObjectId) -> Optional[Dict[str, Any]]:
     )
 
 
+def find_leads_by_ids(lead_ids: List[ObjectId]) -> List[Dict[str, Any]]:
+    if not lead_ids:
+        return []
+    return list(
+        get_collection("leads").find(
+            {"_id": {"$in": lead_ids}, "entityType": ADMISSION_LEAD_ENTITY_TYPE}
+        )
+    )
+
+
 def find_active_lead_by_contact(contact_id: ObjectId) -> Optional[Dict[str, Any]]:
     return get_collection("leads").find_one(
         {
@@ -35,6 +45,33 @@ def find_active_lead_by_contact(contact_id: ObjectId) -> Optional[Dict[str, Any]
             "isActive": True,
         }
     )
+
+
+def find_active_leads_by_contacts(contact_ids: List[ObjectId]) -> List[Dict[str, Any]]:
+    if not contact_ids:
+        return []
+    return list(
+        get_collection("leads").find(
+            {
+                "contactId": {"$in": contact_ids},
+                "entityType": ADMISSION_LEAD_ENTITY_TYPE,
+                "isActive": True,
+            }
+        )
+    )
+
+
+def contact_ids_by_assignment(
+    assigned_counsellor_id: Optional[ObjectId], unassigned: Optional[bool]
+) -> List[ObjectId]:
+    query: Dict[str, Any] = {"entityType": ADMISSION_LEAD_ENTITY_TYPE, "isActive": True}
+    if assigned_counsellor_id is not None:
+        query["assignedCounsellorId"] = assigned_counsellor_id
+    elif unassigned is True:
+        query["assignedCounsellorId"] = None
+    elif unassigned is False:
+        query["assignedCounsellorId"] = {"$ne": None}
+    return list(get_collection("leads").distinct("contactId", query))
 
 
 def assigned_contact_ids(counsellor_id: ObjectId) -> List[ObjectId]:

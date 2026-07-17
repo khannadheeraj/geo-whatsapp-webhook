@@ -5,7 +5,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.errors import AuthorizationError, ConflictError, NotFoundError, ValidationApiError
 from app.models.crm_model import ADMISSION_LEAD_ENTITY_TYPE, ActivityType, LeadStatus
 from app.models.user_model import UserRole
-from app.repositories.contact_repository import find_contact_by_id, find_contact_preference
+from app.repositories.contact_repository import (
+    find_contact_by_id,
+    find_contact_preference,
+    find_contacts_by_ids,
+    search_contact_ids,
+)
 from app.repositories.lead_repository import (
     find_active_lead_by_contact,
     find_lead_by_id,
@@ -14,13 +19,14 @@ from app.repositories.lead_repository import (
     list_leads as repository_list_leads,
     update_lead,
 )
+from app.repositories.user_repository import find_staff_users_by_ids
 from app.schemas.lead_schema import LeadCreateModel, LeadPatchModel
 from app.services.access_service import assert_lead_access, is_super_admin
 from app.services.activity_service import record_activity
 from app.services.assignment_service import record_initial_assignment, validate_counsellor
 from app.services.audit_service import write_audit_event
 from app.services.preference_service import is_contact_suppressed
-from app.utils.crm_validation import clean_optional_text, normalize_code
+from app.utils.crm_validation import clean_optional_text, normalize_lead_source
 from app.utils.mongo_utils import object_id_or_not_found
 from app.utils.time_utils import utc_now
 
@@ -95,7 +101,7 @@ def create_lead(
 
     now = utc_now()
     operation_id = operation_id or f"lead-create:{uuid.uuid4()}"
-    source = normalize_code(payload.source) or contact.get("source")
+    source = normalize_lead_source(payload.source) or contact.get("source")
     document: Dict[str, Any] = {
         "entityType": ADMISSION_LEAD_ENTITY_TYPE,
         "contactId": contact_id,
@@ -165,11 +171,13 @@ def get_lead(lead_id_value: Any, actor: Dict[str, Any]) -> Dict[str, Any]:
 
 def get_lead_detail(lead_id_value: Any, actor: Dict[str, Any]) -> Dict[str, Any]:
     lead = get_lead(lead_id_value, actor)
+    owners = find_staff_users_by_ids([lead["assignedCounsellorId"]]) if lead.get("assignedCounsellorId") else []
     return {
         "lead": lead,
         "contact": find_contact_by_id(lead["contactId"]),
         "preferences": find_contact_preference(lead["contactId"]),
         "courseInterests": list_course_interests(lead["_id"]),
+        "assignedCounsellor": owners[0] if owners else None,
     }
 
 
@@ -185,6 +193,7 @@ def list_leads(
     source: Optional[str] = None,
     preferred_mode: Optional[str] = None,
     target_year: Optional[int] = None,
+    search: Optional[str] = None,
     created_from: Optional[datetime] = None,
     created_to: Optional[datetime] = None,
     activity_from: Optional[datetime] = None,
@@ -213,11 +222,13 @@ def list_leads(
     if priority:
         query["priority"] = priority
     if source:
-        query["source"] = normalize_code(source)
+        query["source"] = normalize_lead_source(source)
     if preferred_mode:
         query["preferredMode"] = preferred_mode
     if target_year is not None:
         query["targetExamYear"] = target_year
+    if search and search.strip():
+        query["contactId"] = {"$in": search_contact_ids(search)}
     if created_from or created_to:
         query["createdAt"] = {}
         if created_from:
@@ -242,6 +253,15 @@ def list_leads(
         sort_field=sort_field,
         sort_direction=-1 if descending else 1,
     )
+
+
+def lead_list_context(
+    leads: List[Dict[str, Any]],
+) -> Tuple[Dict[Any, Dict[str, Any]], Dict[Any, Dict[str, Any]]]:
+    contacts = find_contacts_by_ids([lead["contactId"] for lead in leads])
+    owner_ids = list({lead["assignedCounsellorId"] for lead in leads if lead.get("assignedCounsellorId")})
+    owners = find_staff_users_by_ids(owner_ids)
+    return ({item["_id"]: item for item in contacts}, {item["_id"]: item for item in owners})
 
 
 def patch_lead(
@@ -291,7 +311,7 @@ def patch_lead(
         elif field == "preferredMode":
             value = value.value if value else None
         elif field == "source":
-            value = normalize_code(value)
+            value = normalize_lead_source(value)
         elif field in {"sourceDetails", "lostReason"}:
             value = clean_optional_text(value)
         elif field == "nextActionAt" and value is not None and value.tzinfo is None:
@@ -304,6 +324,17 @@ def patch_lead(
             unset_fields.append(field)
         else:
             updates[field] = value
+
+    resulting_status = updates.get("status", lead.get("status"))
+    resulting_lost_reason = updates.get(
+        "lostReason", None if "lostReason" in unset_fields else lead.get("lostReason")
+    )
+    if resulting_status == LeadStatus.LOST.value and not resulting_lost_reason:
+        raise ValidationApiError(
+            "LEAD_LOST_REASON_REQUIRED",
+            "A lost reason is required when a Lead is marked Lost.",
+            {"lostReason": "Enter the reason this Lead was lost."},
+        )
 
     changed_fields = _changed_fields(lead, updates, unset_fields)
     if not changed_fields:

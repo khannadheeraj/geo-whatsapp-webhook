@@ -217,12 +217,45 @@ def ensure_phase1a_indexes() -> None:
     )
 
 
+def ensure_phase1b_indexes() -> None:
+    import_jobs = get_collection("import_jobs")
+    import_rows = get_collection("import_job_rows")
+
+    import_jobs.create_index(
+        [("createdBy", ASCENDING), ("createdAt", DESCENDING)],
+        name="ix_import_actor_created",
+    )
+    import_jobs.create_index(
+        [("status", ASCENDING), ("updatedAt", ASCENDING)],
+        name="ix_import_status_updated",
+    )
+    import_jobs.create_index(
+        [("fileHash", ASCENDING), ("createdBy", ASCENDING), ("createdAt", DESCENDING)],
+        name="ix_import_hash_actor_created",
+    )
+    import_rows.create_index(
+        [("importId", ASCENDING), ("rowNumber", ASCENDING)],
+        unique=True,
+        name="uq_import_row_number",
+    )
+    import_rows.create_index(
+        [("importId", ASCENDING), ("validationStatus", ASCENDING), ("rowNumber", ASCENDING)],
+        name="ix_import_row_status",
+    )
+    import_rows.create_index(
+        [("expiresAt", ASCENDING)],
+        expireAfterSeconds=0,
+        name="ttl_import_row_expiry",
+    )
+
+
 def connect_to_mongo() -> None:
     global mongo_client, db
 
     if db is not None:
         ensure_auth_indexes()
         ensure_phase1a_indexes()
+        ensure_phase1b_indexes()
         return
     if not MONGODB_URI:
         raise RuntimeError("MongoDB configuration is missing")
@@ -232,6 +265,7 @@ def connect_to_mongo() -> None:
         db = mongo_client["geo_whatsapp"]
         ensure_auth_indexes()
         ensure_phase1a_indexes()
+        ensure_phase1b_indexes()
         logger.info("MongoDB connected and application indexes verified.")
     except PyMongoError as exc:
         logger.error("MongoDB connection or index validation failed (%s).", type(exc).__name__)

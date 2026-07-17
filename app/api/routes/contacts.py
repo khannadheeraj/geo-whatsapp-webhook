@@ -5,6 +5,9 @@ from fastapi import APIRouter, Depends, Query, Request, status
 
 from app.api.dependencies.auth import require_authenticated_user, require_super_admin
 from app.api.response_helpers import pagination_metadata
+from app.models.user_model import public_user
+from app.models.crm_model import ActivityType
+from app.repositories.activity_repository import list_contact_activities
 from app.schemas.contact_schema import (
     ContactCreateModel,
     ContactPatchModel,
@@ -49,12 +52,14 @@ async def list_contacts_route(
     source: Optional[str] = Query(default=None, max_length=100),
     isActive: Optional[bool] = None,
     doNotContact: Optional[bool] = None,
+    assignedCounsellorId: Optional[str] = Query(default=None, min_length=24, max_length=24),
+    unassigned: Optional[bool] = None,
     createdFrom: Optional[datetime] = None,
     createdTo: Optional[datetime] = None,
     sort: str = Query("-createdAt", max_length=50),
     user=Depends(require_authenticated_user),
 ):
-    documents, total, preferences = list_contacts(
+    documents, total, preferences, leads, owners = list_contacts(
         user,
         page=page,
         page_size=pageSize,
@@ -63,6 +68,8 @@ async def list_contacts_route(
         source=source,
         is_active=isActive,
         do_not_contact=doNotContact,
+        assigned_counsellor_id=assignedCounsellorId,
+        unassigned=unassigned,
         created_from=createdFrom,
         created_to=createdTo,
         sort=sort,
@@ -71,6 +78,8 @@ async def list_contacts_route(
     for document in documents:
         item = public_document(document)
         preference = preferences.get(document["_id"])
+        lead = leads.get(document["_id"])
+        owner = owners.get(lead.get("assignedCounsellorId")) if lead else None
         item["communicationPreferences"] = (
             {
                 "whatsappAllowed": bool(preference.get("whatsappAllowed")),
@@ -81,6 +90,8 @@ async def list_contacts_route(
             if preference
             else None
         )
+        item["activeLead"] = public_document(lead)
+        item["assignedCounsellor"] = public_user(owner) if owner else None
         data.append(item)
     return {"data": data, "pagination": pagination_metadata(page, pageSize, total)}
 
@@ -96,7 +107,31 @@ async def get_contact_route(
             "contact": public_document(result["contact"]),
             "preferences": public_document(result["preferences"]),
             "activeLead": public_document(result["activeLead"]),
+            "assignedCounsellor": public_user(result["assignedCounsellor"])
+            if result["assignedCounsellor"]
+            else None,
         }
+    }
+
+
+@router.get("/{contactId}/activities")
+async def list_contact_activities_route(
+    contactId: str,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(25, ge=1, le=100),
+    activityType: Optional[ActivityType] = None,
+    user=Depends(require_authenticated_user),
+):
+    contact = get_contact(contactId, user)
+    documents, total = list_contact_activities(
+        contact["_id"],
+        page=page,
+        page_size=pageSize,
+        activity_type=activityType.value if activityType else None,
+    )
+    return {
+        "data": [public_document(document) for document in documents],
+        "pagination": pagination_metadata(page, pageSize, total),
     }
 
 
