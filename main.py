@@ -1,39 +1,44 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.db.mongodb import connect_to_mongo, close_mongo_connection
-from app.api.routes.health import router as health_router
-from app.api.routes.admin import router as admin_router
-from app.api.routes.whatsapp_webhook import router as whatsapp_webhook_router
-from app.api.routes.campaign import router as campaign_router
+from app.api.dependencies.auth import require_authenticated_user, require_super_admin
+from app.api.error_handlers import api_error_handler, request_id_middleware, unhandled_error_handler, validation_error_handler
 from app.api.routes.analytics_router import router as analytics_router
-from app.api.routes.users import router as users_router
+from app.api.routes.auth import router as auth_router
+from app.api.routes.campaign import router as campaign_router
+from app.api.routes.health import router as health_router
 from app.api.routes.template import router as template_router
+from app.api.routes.users import router as users_router
+from app.api.routes.whatsapp_webhook import router as whatsapp_webhook_router
+from app.config import ENVIRONMENT, get_security_settings, validate_security_configuration
+from app.db.mongodb import close_mongo_connection, connect_to_mongo
+from app.errors import ApiError
 
-from app.config import *
 
-IS_PRODUCTION = ENVIRONMENT.upper() in ["DEV", "PROD"]
-
-# app = FastAPI()
-
+IS_PRODUCTION = ENVIRONMENT in {"DEV", "PROD", "PRODUCTION"}
+settings = get_security_settings()
 app = FastAPI(
-    # lifespan=lifespan,
     docs_url=None if IS_PRODUCTION else "/docs",
     redoc_url=None if IS_PRODUCTION else "/redoc",
-    openapi_url=None if IS_PRODUCTION else "/openapi.json"
+    openapi_url=None if IS_PRODUCTION else "/openapi.json",
 )
-
+app.middleware("http")(request_id_middleware)
+app.add_exception_handler(ApiError, api_error_handler)
+app.add_exception_handler(RequestValidationError, validation_error_handler)
+app.add_exception_handler(Exception, unhandled_error_handler)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=list(settings.allowed_origins),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 
 
 @app.on_event("startup")
 def startup_event():
+    validate_security_configuration()
     connect_to_mongo()
 
 
@@ -43,9 +48,9 @@ def shutdown_event():
 
 
 app.include_router(health_router)
-app.include_router(admin_router)
+app.include_router(auth_router)
 app.include_router(whatsapp_webhook_router)
-app.include_router(campaign_router)
-app.include_router(analytics_router)
-app.include_router(users_router)
-app.include_router(template_router)
+app.include_router(template_router, dependencies=[Depends(require_authenticated_user)])
+app.include_router(users_router, dependencies=[Depends(require_super_admin)])
+app.include_router(campaign_router, dependencies=[Depends(require_super_admin)])
+app.include_router(analytics_router, dependencies=[Depends(require_super_admin)])

@@ -1,4 +1,3 @@
-import json
 import time
 
 from fastapi import APIRouter, Request, HTTPException
@@ -37,7 +36,7 @@ async def verify_whatsapp_webhook(request: Request):
         token == WHATSAPP_VERIFY_TOKEN
     )
 
-    if mode == "subscribe" and token == WHATSAPP_VERIFY_TOKEN:
+    if WHATSAPP_VERIFY_TOKEN and mode == "subscribe" and token == WHATSAPP_VERIFY_TOKEN:
         return PlainTextResponse(content=challenge)
 
     raise HTTPException(
@@ -56,7 +55,7 @@ async def receive_whatsapp_webhook(request: Request):
     try:
         payload = await request.json()
 
-        logger.critical("webhook Payload======>{}", payload)
+        logger.info("WhatsApp webhook payload received")
 
         raw_webhooks = get_collection("raw_webhooks")
         whatsapp_events = get_collection("whatsapp_events")

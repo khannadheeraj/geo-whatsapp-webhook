@@ -6,3 +6,5 @@ PyJWT==2.8.0
 pydantic==2.9.2
 requests==2.31.0
 loguru==0.7.0
+argon2-cffi==23.1.0
+python-dotenv==1.0.1

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from app.db.mongodb import get_collection
 from app.schemas.user_schema import BulkUserUploadRequestModel
 from app.utils.phone_utils import clean_phone_number
+from app.models.user_model import LEGACY_CONTACT_ENTITY_TYPE, STAFF_USER_ENTITY_TYPE
 
 logger = logging.getLogger("whatsapp-webhook")
 
@@ -25,13 +26,16 @@ async def get_users(
         user_collection = get_collection("users")
 
         # Build search filter
-        search_filter = {}
+        search_filter = {"entityType": {"$ne": STAFF_USER_ENTITY_TYPE}}
         if search.strip():
             search_filter = {
-                "$or": [
-                    {"username": {"$regex": search.strip(), "$options": "i"}},
-                    {"phoneNumber": {"$regex": search.strip(), "$options": "i"}},
-                    {"normalizedPhone": {"$regex": search.strip(), "$options": "i"}},
+                "$and": [
+                    {"entityType": {"$ne": STAFF_USER_ENTITY_TYPE}},
+                    {"$or": [
+                        {"username": {"$regex": search.strip(), "$options": "i"}},
+                        {"phoneNumber": {"$regex": search.strip(), "$options": "i"}},
+                        {"normalizedPhone": {"$regex": search.strip(), "$options": "i"}},
+                    ]},
                 ]
             }
 
@@ -109,6 +113,7 @@ async def bulk_upload_users(payload: BulkUserUploadRequestModel):
 
             valid_users.append(
                 {
+                    "entityType": LEGACY_CONTACT_ENTITY_TYPE,
                     "username": username,
                     "phoneNumber": user.phoneNumber,
                     "normalizedPhone": normalized_phone,
