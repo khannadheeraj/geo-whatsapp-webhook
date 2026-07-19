@@ -370,6 +370,14 @@ def ensure_phase2e1_indexes() -> None:
     recipients.create_index([("broadcastId", ASCENDING), ("status", ASCENDING), ("retryNotBefore", ASCENDING), ("attemptCount", ASCENDING)], name="ix_whatsapp_broadcast_retry_due")
 
 
+def ensure_phase3a_indexes() -> None:
+    tasks = get_collection("follow_up_tasks")
+    tasks.create_index([("assignedCounsellorId", ASCENDING), ("dueAt", ASCENDING)], name="ix_follow_up_owner_due")
+    tasks.create_index([("status", ASCENDING), ("dueAt", ASCENDING)], name="ix_follow_up_status_due")
+    tasks.create_index([("leadId", ASCENDING), ("dueAt", ASCENDING)], name="ix_follow_up_lead_due")
+    tasks.create_index([("status", ASCENDING), ("dueAt", ASCENDING), ("assignedCounsellorId", ASCENDING)], name="ix_follow_up_overdue")
+
+
 def connect_to_mongo() -> None:
     global mongo_client, db
 
@@ -382,6 +390,7 @@ def connect_to_mongo() -> None:
         ensure_phase2c1_indexes()
         ensure_phase2d1_indexes()
         ensure_phase2e1_indexes()
+        ensure_phase3a_indexes()
         return
     if not MONGODB_URI:
         raise RuntimeError("MongoDB configuration is missing")
@@ -397,6 +406,7 @@ def connect_to_mongo() -> None:
         ensure_phase2c1_indexes()
         ensure_phase2d1_indexes()
         ensure_phase2e1_indexes()
+        ensure_phase3a_indexes()
         logger.info("MongoDB connected and application indexes verified.")
     except PyMongoError as exc:
         logger.error("MongoDB connection or index validation failed (%s).", type(exc).__name__)

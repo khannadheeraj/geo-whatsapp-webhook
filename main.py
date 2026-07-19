@@ -12,6 +12,7 @@ from app.api.routes.contact_imports import router as contact_imports_router
 from app.api.routes.dashboard import router as dashboard_router
 from app.api.routes.health import router as health_router
 from app.api.routes.leads import router as leads_router
+from app.api.routes.follow_ups import router as follow_ups_router
 from app.api.routes.reassignment_requests import router as reassignment_requests_router
 from app.api.routes.template import router as template_router
 from app.api.routes.users import router as users_router
@@ -64,6 +65,7 @@ app.include_router(contacts_router)
 app.include_router(contact_imports_router)
 app.include_router(dashboard_router)
 app.include_router(leads_router)
+app.include_router(follow_ups_router)
 app.include_router(reassignment_requests_router)
 app.include_router(template_router, dependencies=[Depends(require_authenticated_user)])
 app.include_router(whatsapp_templates_router)
