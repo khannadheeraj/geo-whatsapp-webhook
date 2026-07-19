@@ -3,6 +3,7 @@ import hmac
 import json
 from datetime import datetime
 
+from app.repositories import whatsapp_message_repository
 from app.services.whatsapp_extractor import extract_whatsapp_events
 from app.services.whatsapp_message_service import record_outbound_template_message
 
@@ -24,6 +25,35 @@ def _post(client, raw_body: bytes):
             "X-Hub-Signature-256": _signature(raw_body),
         },
     )
+
+
+def test_conversation_upsert_keeps_mutable_paths_out_of_set_on_insert(monkeypatch):
+    calls = []
+
+    class ConversationCollection:
+        def update_one(self, identity, update, upsert=False):
+            calls.append((identity, update, upsert))
+            assert not (set(update["$set"]) & set(update["$setOnInsert"]))
+
+        def find_one(self, identity):
+            return {"_id": "conversation-id", **identity}
+
+    monkeypatch.setattr(
+        "app.repositories.whatsapp_message_repository.get_collection",
+        lambda name: ConversationCollection(),
+    )
+    identity = {"channel": "WHATSAPP", "phoneNumberId": "business-1", "normalizedPhone": "919876543210"}
+    whatsapp_message_repository.upsert_conversation(
+        identity,
+        {"contactId": "contact-id", "leadId": "lead-id", "conversationId": "ignored", "updatedAt": datetime(2026, 7, 19)},
+        {**identity, "createdAt": datetime(2026, 7, 19)},
+    )
+
+    _, update, upsert = calls[0]
+    assert upsert is True
+    assert update["$set"]["contactId"] == "contact-id"
+    assert update["$set"]["leadId"] == "lead-id"
+    assert set(update["$setOnInsert"]) == {"channel", "phoneNumberId", "normalizedPhone", "createdAt"}
 
 
 def test_extractor_normalizes_text_buttons_templates_and_omits_raw_payloads():

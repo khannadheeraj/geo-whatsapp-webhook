@@ -75,8 +75,6 @@ def _conversation(
         updates["assignedCounsellorId"] = lead.get("assignedCounsellorId")
     defaults = {
         **identity,
-        "contactId": contact.get("_id") if contact else None,
-        "leadId": lead.get("_id") if lead else None,
         "createdAt": now,
     }
     return repository.upsert_conversation(identity, updates, defaults)
