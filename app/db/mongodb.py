@@ -362,6 +362,8 @@ def ensure_phase2e1_indexes() -> None:
     recipients.create_index([("broadcastId", ASCENDING), ("status", ASCENDING), ("_id", ASCENDING)], name="ix_whatsapp_broadcast_execution_claim")
     recipients.create_index([("broadcastId", ASCENDING), ("status", ASCENDING), ("leaseExpiresAt", ASCENDING)], name="ix_whatsapp_broadcast_processing_lease")
     recipients.create_index([("idempotencyKey", ASCENDING)], unique=True, sparse=True, name="uq_whatsapp_broadcast_recipient_idempotency")
+    recipients.create_index([("providerMessageId", ASCENDING)], unique=True, sparse=True, name="uq_whatsapp_broadcast_recipient_provider_message")
+    recipients.create_index([("broadcastId", ASCENDING), ("executionStatus", ASCENDING), ("deliveryStatus", ASCENDING)], name="ix_whatsapp_broadcast_recipient_report")
 
 
 def connect_to_mongo() -> None:

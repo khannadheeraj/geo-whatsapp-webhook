@@ -81,7 +81,8 @@ def _process(recipient: Dict[str, Any], broadcast: Dict[str, Any], worker_id: st
     except Exception:
         repository.finish_recipient(recipient["_id"], worker_id, {"status": "FAILED_FINAL", "failureCode": "PROVIDER_ACCEPTED_PERSISTENCE_FAILED", "providerMessageId": provider_id, "idempotencyKey": key, "updatedAt": _now()})
         return "FAILED_FINAL"
-    repository.finish_recipient(recipient["_id"], worker_id, {"status": "ACCEPTED", "providerMessageId": provider_id, "messageId": message["_id"], "idempotencyKey": key, "acceptedAt": _now(), "updatedAt": _now()})
+    accepted_at = _now()
+    repository.finish_recipient(recipient["_id"], worker_id, {"status": "ACCEPTED", "providerMessageId": provider_id, "messageId": message["_id"], "idempotencyKey": key, "acceptedAt": accepted_at, "deliveryStatus": "ACCEPTED", "deliveryAcceptedAt": accepted_at, "deliveryTimeline": [{"status": "ACCEPTED", "at": accepted_at}], "updatedAt": accepted_at})
     return "ACCEPTED"
 
 

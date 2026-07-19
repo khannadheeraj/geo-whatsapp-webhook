@@ -7,6 +7,7 @@ from app.api.response_helpers import pagination_metadata
 from app.schemas.whatsapp_broadcast_schema import BroadcastBatchModel, BroadcastCreateModel, BroadcastPrepareModel, BroadcastVersionModel
 from app.services.whatsapp_broadcast_service import create_broadcast, delete_broadcast, get_broadcast, prepare_broadcast, recipients
 from app.services.whatsapp_broadcast_execution_service import cancel, confirm, execute_batch, execution, retry_failures
+from app.services.whatsapp_broadcast_analytics_service import analytics, recipient_detail, report
 from app.utils.mongo_utils import public_document
 
 router = APIRouter(prefix="/whatsapp-broadcasts", tags=["WhatsApp Broadcasts"])
@@ -44,6 +45,19 @@ async def execute_batch_route(broadcastId: str, payload: BroadcastBatchModel, re
 @router.get("/{broadcastId}/execution")
 async def execution_route(broadcastId: str, user=Depends(require_super_admin)):
     return {"data": execution(broadcastId)}
+
+@router.get("/{broadcastId}/analytics")
+async def analytics_route(broadcastId: str, user=Depends(require_super_admin)):
+    return {"data": analytics(broadcastId)}
+
+@router.get("/{broadcastId}/report")
+async def report_route(broadcastId: str, executionStatus: Optional[str] = Query(default=None, max_length=50), deliveryStatus: Optional[str] = Query(default=None, pattern="^(ACCEPTED|SENT|DELIVERED|READ|FAILED)$"), page: int = Query(1, ge=1), pageSize: int = Query(25, ge=1, le=100), user=Depends(require_super_admin)):
+    documents, total = report(broadcastId, executionStatus, deliveryStatus, page, pageSize)
+    return {"data": documents, "pagination": pagination_metadata(page, pageSize, total)}
+
+@router.get("/{broadcastId}/recipients/{recipientId}")
+async def recipient_detail_route(broadcastId: str, recipientId: str, user=Depends(require_super_admin)):
+    return {"data": recipient_detail(broadcastId, recipientId)}
 
 @router.post("/{broadcastId}/retry-failures")
 async def retry_failures_route(broadcastId: str, payload: BroadcastVersionModel, request: Request, user=Depends(require_super_admin)):

@@ -5,6 +5,7 @@ from app.repositories import contact_repository, lead_repository
 from app.repositories import whatsapp_message_repository as repository
 from app.errors import ValidationApiError
 from app.utils.phone_utils import clean_phone_number, normalize_indian_phone
+from app.services.whatsapp_broadcast_analytics_service import correlate_delivery_status
 
 
 CHANNEL = "WHATSAPP"
@@ -251,6 +252,7 @@ def _record_status(event: Dict[str, Any]) -> None:
         event.get("failureCode"),
         event.get("failureMessage"),
     )
+    correlate_delivery_status(provider_message_id, status.upper(), occurred_at, event.get("failureCode"))
     details = event.get("failureDetails")
     if status == "failed" and details and event.get("eventKey"):
         repository.store_temporary_failure_details(

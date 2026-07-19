@@ -140,3 +140,50 @@ def execution_counts(broadcast_id: ObjectId) -> Dict[str, int]:
         "finalFailure": counts.get("FAILED_FINAL", 0), "remaining": counts.get("PENDING", 0) + counts.get("PROCESSING", 0),
         "skipped": counts.get("SKIPPED", 0), "processing": counts.get("PROCESSING", 0),
     }
+
+
+def correlate_delivery_status(provider_message_id: str, status: str, occurred_at: Any, failure_code: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    allowed = {
+        "ACCEPTED": [None],
+        "SENT": [None, "ACCEPTED"],
+        "DELIVERED": [None, "ACCEPTED", "SENT"],
+        "READ": [None, "ACCEPTED", "SENT", "DELIVERED"],
+        "FAILED": [None, "ACCEPTED"],
+    }[status]
+    field = {"ACCEPTED": "deliveryAcceptedAt", "SENT": "deliverySentAt", "DELIVERED": "deliveryDeliveredAt", "READ": "deliveryReadAt", "FAILED": "deliveryFailedAt"}[status]
+    updates: Dict[str, Any] = {"deliveryStatus": status, field: occurred_at, "updatedAt": occurred_at}
+    if status == "FAILED": updates["deliveryFailureCode"] = (str(failure_code or "WHATSAPP_DELIVERY_FAILED")[:100])
+    timeline = {"status": status, "at": occurred_at}
+    if status == "FAILED": timeline["failureCode"] = updates["deliveryFailureCode"]
+    return get_collection("whatsapp_broadcast_recipients").find_one_and_update(
+        {"providerMessageId": provider_message_id, "deliveryStatus": {"$in": allowed}},
+        {"$set": updates, "$push": {"deliveryTimeline": {"$each": [timeline], "$slice": -10}}},
+        return_document=ReturnDocument.AFTER,
+    )
+
+
+def analytics_counts(broadcast_id: ObjectId) -> Dict[str, int]:
+    rows = list(get_collection("whatsapp_broadcast_recipients").find({"broadcastId": broadcast_id}, {"status": 1, "executionStatus": 1, "deliveryStatus": 1, "exclusionReason": 1}))
+    execution = lambda row: row.get("executionStatus") or row.get("status")
+    count = lambda predicate: sum(1 for row in rows if predicate(row))
+    return {
+        "totalPrepared": len(rows),
+        "eligible": count(lambda row: not (execution(row) == "REJECTED" or (execution(row) == "SKIPPED" and row.get("exclusionReason") != "BROADCAST_CANCELLED"))),
+        "skipped": count(lambda row: execution(row) == "SKIPPED" and row.get("exclusionReason") != "BROADCAST_CANCELLED"),
+        "rejected": count(lambda row: execution(row) == "REJECTED"),
+        "pending": count(lambda row: execution(row) == "PENDING"), "processing": count(lambda row: execution(row) == "PROCESSING"),
+        "accepted": count(lambda row: row.get("deliveryStatus") == "ACCEPTED" or (execution(row) == "ACCEPTED" and not row.get("deliveryStatus"))),
+        "sent": count(lambda row: row.get("deliveryStatus") == "SENT"), "delivered": count(lambda row: row.get("deliveryStatus") == "DELIVERED"),
+        "read": count(lambda row: row.get("deliveryStatus") == "READ"), "failedRetryable": count(lambda row: execution(row) == "FAILED_RETRYABLE"),
+        "failedFinal": count(lambda row: execution(row) == "FAILED_FINAL"), "cancelled": count(lambda row: execution(row) == "SKIPPED" and row.get("exclusionReason") == "BROADCAST_CANCELLED"),
+    }
+
+
+def list_report(query: Dict[str, Any], *, page: int, page_size: int) -> Tuple[List[Dict[str, Any]], int]:
+    collection = get_collection("whatsapp_broadcast_recipients")
+    total = collection.count_documents(query)
+    return list(collection.find(query).sort([("displayName", 1), ("_id", 1)]).skip((page - 1) * page_size).limit(page_size)), total
+
+
+def find_recipient(broadcast_id: ObjectId, recipient_id: ObjectId) -> Optional[Dict[str, Any]]:
+    return get_collection("whatsapp_broadcast_recipients").find_one({"_id": recipient_id, "broadcastId": broadcast_id})
