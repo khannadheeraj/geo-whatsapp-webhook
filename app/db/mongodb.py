@@ -357,6 +357,8 @@ def ensure_phase2e1_indexes() -> None:
     recipients = get_collection("whatsapp_broadcast_recipients")
     broadcasts.create_index([("status", ASCENDING), ("createdAt", DESCENDING)], name="ix_whatsapp_broadcast_status_created")
     broadcasts.create_index([("createdBy", ASCENDING), ("createdAt", DESCENDING)], name="ix_whatsapp_broadcast_creator_created")
+    broadcasts.create_index([("createdAt", DESCENDING), ("_id", DESCENDING)], name="ix_whatsapp_broadcast_history_created")
+    broadcasts.create_index([("schedulerState", ASCENDING), ("createdAt", DESCENDING)], name="ix_whatsapp_broadcast_scheduler_created")
     recipients.create_index([("broadcastId", ASCENDING), ("status", ASCENDING), ("displayName", ASCENDING)], name="ix_whatsapp_broadcast_recipient_preview")
     recipients.create_index([("broadcastId", ASCENDING), ("contactId", ASCENDING)], unique=True, name="uq_whatsapp_broadcast_recipient_contact")
     recipients.create_index([("broadcastId", ASCENDING), ("status", ASCENDING), ("_id", ASCENDING)], name="ix_whatsapp_broadcast_execution_claim")

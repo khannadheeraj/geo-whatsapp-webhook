@@ -1,4 +1,5 @@
 from typing import Optional
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
 
@@ -9,6 +10,7 @@ from app.services.whatsapp_broadcast_service import create_broadcast, delete_bro
 from app.services.whatsapp_broadcast_execution_service import cancel, confirm, execute_batch, execution, retry_failures
 from app.services.whatsapp_broadcast_analytics_service import analytics, recipient_detail, report
 from app.services.whatsapp_broadcast_scheduler_service import schedule, scheduler_state, unschedule
+from app.services.whatsapp_broadcast_history_service import list_history
 from app.utils.mongo_utils import public_document
 
 router = APIRouter(prefix="/whatsapp-broadcasts", tags=["WhatsApp Broadcasts"])
@@ -16,6 +18,17 @@ router = APIRouter(prefix="/whatsapp-broadcasts", tags=["WhatsApp Broadcasts"])
 @router.post("")
 async def create(payload: BroadcastCreateModel, request: Request, user=Depends(require_super_admin)):
     return {"data": public_document(create_broadcast(payload, user, request.state.request_id))}
+
+@router.get("")
+async def list_history_route(
+    state: Optional[str] = Query(default=None, pattern="^(DRAFT|PREPARING|CONFIRMED|EXECUTING|PAUSED_RETRYABLE|COMPLETED|CANCELLED)$"),
+    schedulerState: Optional[str] = Query(default=None, pattern="^(UNSCHEDULED|SCHEDULED|RUNNING|WAITING_RETRY|COMPLETED|CANCELLED)$"),
+    templateName: Optional[str] = Query(default=None, max_length=200),
+    createdFrom: Optional[datetime] = Query(default=None), createdTo: Optional[datetime] = Query(default=None),
+    page: int = Query(1, ge=1), pageSize: int = Query(25, ge=1, le=100), user=Depends(require_super_admin),
+):
+    documents, total = list_history(state=state, scheduler_state=schedulerState, template_name=templateName, created_from=createdFrom, created_to=createdTo, page=page, page_size=pageSize)
+    return {"data": documents, "pagination": pagination_metadata(page, pageSize, total)}
 
 @router.get("/{broadcastId}")
 async def detail(broadcastId: str, user=Depends(require_super_admin)):

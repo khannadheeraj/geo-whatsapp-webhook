@@ -16,6 +16,13 @@ def find_broadcast(broadcast_id: ObjectId) -> Optional[Dict[str, Any]]:
     return get_collection("whatsapp_broadcasts").find_one({"_id": broadcast_id})
 
 
+def list_broadcasts(query: Dict[str, Any], *, page: int, page_size: int) -> Tuple[List[Dict[str, Any]], int]:
+    collection = get_collection("whatsapp_broadcasts")
+    total = collection.count_documents(query)
+    documents = list(collection.find(query).sort([("createdAt", -1), ("_id", -1)]).skip((page - 1) * page_size).limit(page_size))
+    return documents, total
+
+
 def claim_preparation(broadcast_id: ObjectId, version: int, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return get_collection("whatsapp_broadcasts").find_one_and_update(
         {"_id": broadcast_id, "status": "DRAFT", "version": version},
