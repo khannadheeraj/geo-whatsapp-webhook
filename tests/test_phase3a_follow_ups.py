@@ -27,7 +27,7 @@ def test_follow_up_scope_reassignment_version_completion_cancellation_and_filter
     assert client.get(f"/follow-ups/{task['id']}",headers=_headers(client,"fu-owner2@example.com")).status_code==403
     changed=client.patch(f"/follow-ups/{task['id']}",headers=headers,json={"version":1,"assignedCounsellorId":str(new_owner["_id"]),"dueAt":(datetime.now(timezone.utc)+timedelta(hours=2)).isoformat()}); assert changed.status_code==200
     assert client.patch(f"/follow-ups/{task['id']}",headers=headers,json={"version":1,"purpose":"stale"}).status_code==409
-    completed=client.post(f"/follow-ups/{task['id']}/complete",headers=_headers(client,"fu-new@example.com"),json={"version":2,"completionNote":"Done"}); assert completed.status_code==200 and completed.json()["data"]["status"]=="COMPLETED"
+    completed=client.post(f"/follow-ups/{task['id']}/complete",headers=_headers(client,"fu-new@example.com"),json={"version":2,"completionNote":"Done","outcome":"GENERAL_COMPLETED"}); assert completed.status_code==200 and completed.json()["data"]["status"]=="COMPLETED"
     task2=client.post("/follow-ups",headers=headers,json=_payload(contact,new_owner["_id"],type="GENERAL")).json()["data"]
     cancelled=client.post(f"/follow-ups/{task2['id']}/cancel",headers=_headers(client,"fu-new@example.com"),json={"version":1,"cancellationNote":"No longer needed"}); assert cancelled.status_code==200 and cancelled.json()["data"]["status"]=="CANCELLED"
     assert database.audit_logs.find_one({"action":"FOLLOW_UP_COMPLETED"}) and database.audit_logs.find_one({"action":"FOLLOW_UP_CANCELLED"})

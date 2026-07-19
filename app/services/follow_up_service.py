@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, Optional, Tuple
 from bson import ObjectId
 from app.db.mongodb import get_collection
@@ -56,8 +57,22 @@ def action(value, payload, user, request_id, status):
     now = _now(); updates = {"status": status, "updatedAt": now, "updatedBy": user["_id"], ("completedAt" if status == "COMPLETED" else "cancelledAt"): now, ("completedBy" if status == "COMPLETED" else "cancelledBy"): user["_id"]}
     note = payload.completionNote if status == "COMPLETED" else payload.cancellationNote
     if note and note.strip(): updates["completionNote" if status == "COMPLETED" else "cancellationNote"] = note.strip()
+    if status == "COMPLETED":
+        if not payload.outcome: raise ValidationApiError("FOLLOW_UP_OUTCOME_REQUIRED", "Select a counselling outcome.")
+        if payload.outcome in {"CONNECTED_INTERESTED", "CONNECTED_NOT_INTERESTED"} and not (payload.discussionSummary or "").strip(): raise ValidationApiError("FOLLOW_UP_DISCUSSION_REQUIRED", "A discussion summary is required for connected outcomes.")
+        updates["outcome"] = payload.outcome
+        for key, field in (("discussionSummary", "discussionSummary"), ("studentQuestionsOrObjections", "studentQuestionsOrObjections"), ("nextAction", "nextAction")):
+            item = getattr(payload, field, None)
+            if item and item.strip(): updates[key] = item.strip()
+        if payload.leadStatus:
+            get_collection("leads").update_one({"_id": task["leadId"], "isActive": True}, {"$set": {"status": payload.leadStatus, "updatedAt": now, "updatedBy": user["_id"]}, "$inc": {"version": 1}})
     updated = repository.update(task["_id"], payload.version, {}, updates)
     if not updated: raise ConflictError("FOLLOW_UP_VERSION_CONFLICT", "The follow-up changed elsewhere. Refresh and try again.")
+    if status == "COMPLETED" and payload.nextFollowUpAt:
+        due_at = _due(payload.nextFollowUpAt)
+        next_task = repository.insert({"contactId": task["contactId"], "leadId": task["leadId"], "assignedCounsellorId": task["assignedCounsellorId"], "type": payload.nextFollowUpType or task["type"], "dueAt": due_at, "priority": payload.nextFollowUpPriority or task["priority"], "status": "PENDING", "purpose": (payload.nextAction or task["purpose"]).strip(), "createdBy": user["_id"], "createdAt": now, "updatedBy": user["_id"], "updatedAt": now, "version": 1, "previousFollowUpId": task["_id"]})
+        updated["nextFollowUpId"] = next_task["_id"]
+        _event("CREATED", next_task, user, request_id)
     _event(status, updated, user, request_id); return updated
 def list_follow_ups(user, *, assigned, status, task_type, priority, due_from, due_to, overdue, search, page, page_size) -> Tuple[list, int]:
     query: Dict[str, Any] = {}
@@ -72,3 +87,24 @@ def list_follow_ups(user, *, assigned, status, task_type, priority, due_from, du
     if user.get("role") != UserRole.SUPER_ADMIN.value:
         lead_ids = [x["_id"] for x in get_collection("leads").find({"entityType": "ADMISSION_LEAD", "isActive": True, "assignedCounsellorId": user["_id"]}, {"_id": 1})]; query["leadId"] = {"$in": lead_ids}
     return repository.list_tasks(query, page, page_size)
+
+def work_queue(user, *, group, assigned, page, page_size):
+    now = _now(); india = ZoneInfo("Asia/Kolkata"); local_now = now.astimezone(india); start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc); end = local_now.replace(hour=23, minute=59, second=59, microsecond=999999).astimezone(timezone.utc)
+    lead_query = {"entityType": "ADMISSION_LEAD", "isActive": True}
+    if user.get("role") != UserRole.SUPER_ADMIN.value: lead_query["assignedCounsellorId"] = user["_id"]
+    elif assigned: lead_query["assignedCounsellorId"] = object_id_or_not_found(assigned, "counsellor")
+    leads = list(get_collection("leads").find(lead_query)); lead_ids = [lead["_id"] for lead in leads]
+    tasks = list(get_collection("follow_up_tasks").find({"leadId": {"$in": lead_ids}}))
+    pending = [task for task in tasks if task.get("status") == "PENDING"]
+    completed_today = [task for task in tasks if task.get("status") == "COMPLETED" and start <= task.get("completedAt", now) <= end]
+    groups = {"OVERDUE": [task for task in pending if task.get("dueAt") < now], "DUE_TODAY": [task for task in pending if start <= task.get("dueAt") <= end], "UPCOMING": [task for task in pending if task.get("dueAt") > end], "COMPLETED_TODAY": completed_today}
+    pending_leads = {task["leadId"] for task in pending}; groups["LEADS_WITHOUT_PENDING_FOLLOW_UP"] = [lead for lead in leads if lead["_id"] not in pending_leads]
+    selected = groups.get(group or "OVERDUE", groups["OVERDUE"])
+    priorities = {"URGENT": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    selected.sort(key=lambda item: (priorities.get(item.get("priority"), 9), item.get("dueAt", item.get("lastActivityAt", item.get("createdAt", now))), item.get("_id")))
+    contacts = {item["_id"]: item for item in get_collection("contacts").find({"_id": {"$in": [lead["contactId"] for lead in leads]}})}; users = {item["_id"]: item for item in get_collection("users").find({"_id": {"$in": [lead.get("assignedCounsellorId") for lead in leads if lead.get("assignedCounsellorId")]}})}; lead_map = {lead["_id"]: lead for lead in leads}
+    result=[]
+    for item in selected[(page-1)*page_size:page*page_size]:
+        lead = item if group == "LEADS_WITHOUT_PENDING_FOLLOW_UP" else lead_map[item["leadId"]]; contact = contacts.get(lead["contactId"], {}); owner = users.get(lead.get("assignedCounsellorId"), {})
+        result.append({"queueGroup": group or "OVERDUE", "task": None if group == "LEADS_WITHOUT_PENDING_FOLLOW_UP" else {**item, "id": item["_id"]}, "contact": {"id": contact.get("_id"), "displayName": contact.get("displayName"), "normalizedPhone": contact.get("normalizedPhone")}, "lead": {"id": lead["_id"], "status": lead.get("status"), "lastActivityAt": lead.get("lastActivityAt"), "createdAt": lead.get("createdAt")}, "assignedCounsellor": {"id": owner.get("_id"), "displayName": owner.get("displayName")}})
+    return result, {key: len(value) for key, value in groups.items()}, len(selected)

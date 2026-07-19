@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 
 FollowUpType = Literal["CALL", "WHATSAPP", "MEETING", "DOCUMENT", "PAYMENT", "GENERAL"]
 FollowUpPriority = Literal["LOW", "MEDIUM", "HIGH", "URGENT"]
+FollowUpOutcome = Literal["CONNECTED_INTERESTED", "CONNECTED_NOT_INTERESTED", "CALLBACK_REQUESTED", "NO_ANSWER", "BUSY", "WRONG_NUMBER", "GENERAL_COMPLETED"]
 
 
 class FollowUpCreateModel(BaseModel):
@@ -37,3 +38,17 @@ class FollowUpActionModel(BaseModel):
     version: int = Field(ge=1)
     completionNote: Optional[str] = Field(default=None, max_length=1000)
     cancellationNote: Optional[str] = Field(default=None, max_length=1000)
+    outcome: Optional[FollowUpOutcome] = None
+    discussionSummary: Optional[str] = Field(default=None, max_length=2000)
+    studentQuestionsOrObjections: Optional[str] = Field(default=None, max_length=2000)
+    nextAction: Optional[str] = Field(default=None, max_length=500)
+    nextFollowUpAt: Optional[datetime] = None
+    nextFollowUpType: Optional[FollowUpType] = None
+    nextFollowUpPriority: Optional[FollowUpPriority] = "MEDIUM"
+    leadStatus: Optional[str] = Field(default=None, max_length=100)
+
+    @field_validator("nextFollowUpAt")
+    @classmethod
+    def next_due_timezone_required(cls, value):
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None): raise ValueError("nextFollowUpAt must include a timezone offset")
+        return value
