@@ -89,6 +89,7 @@ def list_follow_ups(user, *, assigned, status, task_type, priority, due_from, du
     return repository.list_tasks(query, page, page_size)
 
 def work_queue(user, *, group, assigned, page, page_size):
+    def aware(value): return value.replace(tzinfo=timezone.utc) if value and value.tzinfo is None else (value or _now())
     now = _now(); india = ZoneInfo("Asia/Kolkata"); local_now = now.astimezone(india); start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc); end = local_now.replace(hour=23, minute=59, second=59, microsecond=999999).astimezone(timezone.utc)
     lead_query = {"entityType": "ADMISSION_LEAD", "isActive": True}
     if user.get("role") != UserRole.SUPER_ADMIN.value: lead_query["assignedCounsellorId"] = user["_id"]
@@ -96,8 +97,8 @@ def work_queue(user, *, group, assigned, page, page_size):
     leads = list(get_collection("leads").find(lead_query)); lead_ids = [lead["_id"] for lead in leads]
     tasks = list(get_collection("follow_up_tasks").find({"leadId": {"$in": lead_ids}}))
     pending = [task for task in tasks if task.get("status") == "PENDING"]
-    completed_today = [task for task in tasks if task.get("status") == "COMPLETED" and start <= task.get("completedAt", now) <= end]
-    groups = {"OVERDUE": [task for task in pending if task.get("dueAt") < now], "DUE_TODAY": [task for task in pending if start <= task.get("dueAt") <= end], "UPCOMING": [task for task in pending if task.get("dueAt") > end], "COMPLETED_TODAY": completed_today}
+    completed_today = [task for task in tasks if task.get("status") == "COMPLETED" and start <= aware(task.get("completedAt")) <= end]
+    groups = {"OVERDUE": [task for task in pending if aware(task.get("dueAt")) < now], "DUE_TODAY": [task for task in pending if now <= aware(task.get("dueAt")) <= end], "UPCOMING": [task for task in pending if aware(task.get("dueAt")) > end], "COMPLETED_TODAY": completed_today}
     pending_leads = {task["leadId"] for task in pending}; groups["LEADS_WITHOUT_PENDING_FOLLOW_UP"] = [lead for lead in leads if lead["_id"] not in pending_leads]
     selected = groups.get(group or "OVERDUE", groups["OVERDUE"])
     priorities = {"URGENT": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
