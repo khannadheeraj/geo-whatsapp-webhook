@@ -23,6 +23,10 @@ def latest_message(conversation_id: ObjectId) -> Optional[Dict[str, Any]]:
     )
 
 
+def latest_inbound_message(conversation_id: ObjectId) -> Optional[Dict[str, Any]]:
+    return get_collection("whatsapp_messages").find_one({"conversationId": conversation_id, "direction": "INBOUND"}, sort=[("createdAt", DESCENDING), ("_id", DESCENDING)])
+
+
 def messages_after_view(conversation_id: ObjectId, viewed_at: Optional[datetime]) -> int:
     query: Dict[str, Any] = {"conversationId": conversation_id, "direction": "INBOUND"}
     if viewed_at is not None:

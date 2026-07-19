@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
@@ -10,6 +11,10 @@ from app.models.user_model import UserRole, public_user
 from app.repositories import contact_repository, lead_repository, user_repository
 from app.repositories import whatsapp_inbox_repository as repository
 from app.utils.mongo_utils import object_id_or_not_found, public_document
+from app.repositories import whatsapp_template_send_repository as operations
+from app.services.preference_service import get_contact_communication_eligibility
+from app.services.whatsapp_sender import send_whatsapp_text
+from app.services.whatsapp_message_service import record_outbound_text_message
 
 
 def _now() -> datetime:
@@ -107,3 +112,30 @@ def message_history(conversation_id: str, user: Dict[str, Any], *, cursor: Optio
 def mark_conversation_viewed(conversation_id: str, user: Dict[str, Any]):
     conversation = _authorized_conversation(conversation_id, user)
     return repository.mark_viewed(user["_id"], conversation["_id"], _now())
+
+
+def send_reply(conversation_id: str, text: str, key: str, user: Dict[str, Any]):
+    conversation = _authorized_conversation(conversation_id, user)
+    contact = contact_repository.find_contact_by_id(conversation.get("contactId")) if conversation.get("contactId") else None
+    if not contact or not get_contact_communication_eligibility(contact["_id"], promotional=False).get("allowed"):
+        raise ValidationApiError("CONVERSATION_REPLY_NOT_ALLOWED", "WhatsApp replies are not allowed for this Contact.")
+    inbound = repository.latest_inbound_message(conversation["_id"])
+    if not inbound or (_now() - inbound["createdAt"]).total_seconds() > 86400:
+        raise ValidationApiError("WHATSAPP_REPLY_WINDOW_EXPIRED", "The 24-hour customer-service window has expired. Send an approved template instead.")
+    cleaned = " ".join(text.strip().split())
+    if not cleaned or len(cleaned) > 4096: raise ValidationApiError("WHATSAPP_REPLY_TEXT_INVALID", "Enter a reply up to 4096 characters.")
+    request_hash = hashlib.sha256(f"REPLY|{conversation_id}|{cleaned}".encode()).hexdigest()
+    operation, claimed = operations.claim_send_operation({"actorUserId": user["_id"], "idempotencyKey": key, "requestHash": request_hash, "operationType": "TEXT_REPLY", "status": "PENDING", "createdAt": _now(), "updatedAt": _now()})
+    if not claimed:
+        if operation.get("requestHash") != request_hash: raise ValidationApiError("IDEMPOTENCY_KEY_REUSED", "The idempotency key was used for another request.")
+        if operation.get("status") == "ACCEPTED": return {"message": operation.get("message"), "idempotentReplay": True}
+        raise ValidationApiError("WHATSAPP_REPLY_IN_PROGRESS", "This reply is still being processed.")
+    result = send_whatsapp_text(contact["normalizedPhone"], cleaned)
+    if not result.get("success"):
+        operations.complete_send_operation(operation["_id"], {"status": "FAILED", "updatedAt": _now()}); raise ValidationApiError("WHATSAPP_REPLY_FAILED", "WhatsApp reply could not be sent.")
+    provider_id = ((result.get("response") or {}).get("messages") or [{}])[0].get("id")
+    if not provider_id: raise ValidationApiError("WHATSAPP_REPLY_FAILED", "WhatsApp reply could not be sent.")
+    lead = _active_leads([contact["_id"]]).get(contact["_id"])
+    message = record_outbound_text_message(provider_message_id=provider_id, conversation=conversation, contact=contact, lead=lead, text=cleaned)
+    operations.complete_send_operation(operation["_id"], {"status": "ACCEPTED", "message": message, "updatedAt": _now()})
+    return {"message": message, "idempotentReplay": False}

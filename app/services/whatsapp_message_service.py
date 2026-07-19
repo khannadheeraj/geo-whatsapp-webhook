@@ -160,6 +160,13 @@ def record_outbound_template_message(
     return repository.apply_status(provider_message_id, "ACCEPTED", occurred_at)
 
 
+def record_outbound_text_message(*, provider_message_id: str, conversation: Dict[str, Any], contact: Dict[str, Any], lead: Optional[Dict[str, Any]], text: str) -> Dict[str, Any]:
+    occurred_at = _now()
+    document = {**_base_message(provider_message_id, conversation, conversation.get("normalizedPhone"), contact, lead, occurred_at, "OUTBOUND"), "type": "TEXT", "renderedText": text, "status": "ACCEPTED", "acceptedAt": occurred_at}
+    repository.upsert_outbound_message(document)
+    return repository.apply_status(provider_message_id, "ACCEPTED", occurred_at)
+
+
 def _record_inbound(event: Dict[str, Any]) -> bool:
     provider_message_id = event.get("waMessageId")
     normalized_phone = _normalized_phone(event.get("from"))

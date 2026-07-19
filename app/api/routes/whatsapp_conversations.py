@@ -4,10 +4,13 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api.dependencies.auth import require_authenticated_user
 from app.api.response_helpers import pagination_metadata
-from app.services.whatsapp_inbox_service import list_inbox, mark_conversation_viewed, message_history
+from app.services.whatsapp_inbox_service import list_inbox, mark_conversation_viewed, message_history, send_reply
+from fastapi import Header
+from pydantic import BaseModel, Field
 from app.utils.mongo_utils import public_document
 
 router = APIRouter(prefix="/whatsapp-conversations", tags=["WhatsApp Inbox"])
+class ReplyModel(BaseModel): text: str = Field(min_length=1, max_length=4096)
 
 @router.get("")
 async def list_conversations(page: int = Query(1, ge=1), pageSize: int = Query(25, ge=1, le=100), search: Optional[str] = Query(None, max_length=200), reconciliationStatus: Optional[str] = Query(None, max_length=50), assignedCounsellorId: Optional[str] = Query(None, min_length=24, max_length=24), unreadOnly: bool = False, user=Depends(require_authenticated_user)):
@@ -22,3 +25,8 @@ async def list_messages(conversationId: str, cursor: Optional[str] = None, pageS
 @router.post("/{conversationId}/view")
 async def view_conversation(conversationId: str, user=Depends(require_authenticated_user)):
     return {"data": public_document(mark_conversation_viewed(conversationId, user))}
+
+@router.post("/{conversationId}/replies")
+async def reply_conversation(conversationId: str, payload: ReplyModel, idempotency_key: str = Header(alias="Idempotency-Key", min_length=8, max_length=200), user=Depends(require_authenticated_user)):
+    result = send_reply(conversationId, payload.text, idempotency_key, user)
+    return {"data": {"message": public_document(result["message"]), "idempotentReplay": result["idempotentReplay"]}}

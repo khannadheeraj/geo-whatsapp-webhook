@@ -126,3 +126,14 @@ def send_whatsapp_template(
             "error": "WHATSAPP_REQUEST_FAILED",
             "response": None
         }
+
+
+def send_whatsapp_text(phone: str, text: str):
+    if not WHATSAPP_ACCESS_TOKEN or not WHATSAPP_PHONE_NUMBER_ID:
+        return {"success": False, "error": "WHATSAPP_NOT_CONFIGURED", "response": None}
+    try:
+        response = requests.post(f"https://graph.facebook.com/{WHATSAPP_GRAPH_API_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages", headers={"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}", "Content-Type": "application/json"}, json={"messaging_product": "whatsapp", "to": phone, "type": "text", "text": {"body": text}}, timeout=20)
+        return {"success": response.status_code < 400, "error": None if response.status_code < 400 else "WHATSAPP_API_ERROR", "response": response.json() if response.content else {}}
+    except Exception:
+        logger.exception("WhatsApp text request failed")
+        return {"success": False, "error": "WHATSAPP_REQUEST_FAILED", "response": None}
