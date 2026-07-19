@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from bson import ObjectId
@@ -20,7 +20,9 @@ def serialize_value(value: Any) -> Any:
     if isinstance(value, ObjectId):
         return str(value)
     if isinstance(value, datetime):
-        return value.isoformat()
+        # Legacy PyMongo values may be naive but represent UTC; state that UTC
+        # explicitly in every API response.
+        return (value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)).isoformat()
     if isinstance(value, dict):
         return {key: serialize_value(item) for key, item in value.items()}
     if isinstance(value, list):

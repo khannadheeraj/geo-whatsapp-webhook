@@ -24,6 +24,7 @@ from app.repositories.user_repository import (
 from app.services.audit_service import write_audit_event
 from app.services.password_service import hash_password, validate_password, verify_password
 from app.services.token_service import create_access_token, generate_refresh_token, hash_refresh_token
+from app.utils.mongo_utils import serialize_value
 
 
 _DUMMY_HASH: Optional[str] = None
@@ -42,7 +43,7 @@ def _response(user: Dict[str, Any], session: Dict[str, Any], refresh_token: str)
     return {
         "accessToken": access_token,
         "tokenType": "bearer",
-        "expiresAt": expires_at.isoformat(),
+        "expiresAt": serialize_value(expires_at),
         "user": public_user(user),
     }, refresh_token
 
