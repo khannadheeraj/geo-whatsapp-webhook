@@ -50,3 +50,93 @@ def delete_draft(broadcast_id: ObjectId, version: int) -> bool:
         get_collection("whatsapp_broadcast_recipients").delete_many({"broadcastId": broadcast_id})
         return True
     return False
+
+
+def confirm_broadcast(broadcast_id: ObjectId, version: int, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    return get_collection("whatsapp_broadcasts").find_one_and_update(
+        {"_id": broadcast_id, "status": "DRAFT", "version": version, "preparedAt": {"$exists": True}},
+        {"$set": updates, "$inc": {"version": 1}}, return_document=ReturnDocument.AFTER,
+    )
+
+
+def freeze_eligible_recipients(broadcast_id: ObjectId, now: Any) -> int:
+    result = get_collection("whatsapp_broadcast_recipients").update_many(
+        {"broadcastId": broadcast_id, "status": "ELIGIBLE"},
+        {"$set": {"status": "PENDING", "executionStatus": "PENDING", "confirmedAt": now, "attemptCount": 0, "updatedAt": now}},
+    )
+    return result.modified_count
+
+
+def claim_next_recipient(broadcast_id: ObjectId, worker_id: str, now: Any, lease_until: Any) -> Optional[Dict[str, Any]]:
+    return get_collection("whatsapp_broadcast_recipients").find_one_and_update(
+        {"broadcastId": broadcast_id, "status": "PENDING"},
+        {"$set": {"status": "PROCESSING", "executionStatus": "PROCESSING", "workerId": worker_id, "leaseExpiresAt": lease_until, "processingStartedAt": now, "updatedAt": now}, "$inc": {"attemptCount": 1}},
+        sort=[("_id", 1)], return_document=ReturnDocument.AFTER,
+    )
+
+
+def mark_provider_call_started(recipient_id: ObjectId, worker_id: str, now: Any) -> bool:
+    return get_collection("whatsapp_broadcast_recipients").update_one(
+        {"_id": recipient_id, "status": "PROCESSING", "workerId": worker_id},
+        {"$set": {"providerCallStartedAt": now, "updatedAt": now}},
+    ).modified_count == 1
+
+
+def finish_recipient(recipient_id: ObjectId, worker_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    clean = {**updates, "executionStatus": updates["status"]}
+    return get_collection("whatsapp_broadcast_recipients").find_one_and_update(
+        {"_id": recipient_id, "status": "PROCESSING", "workerId": worker_id},
+        {"$set": clean, "$unset": {"workerId": "", "leaseExpiresAt": ""}}, return_document=ReturnDocument.AFTER,
+    )
+
+
+def recover_expired_leases(broadcast_id: ObjectId, now: Any) -> Dict[str, int]:
+    collection = get_collection("whatsapp_broadcast_recipients")
+    uncertain = collection.update_many(
+        {"broadcastId": broadcast_id, "status": "PROCESSING", "leaseExpiresAt": {"$lte": now}, "providerCallStartedAt": {"$exists": True}},
+        {"$set": {"status": "FAILED_FINAL", "executionStatus": "FAILED_FINAL", "failureCode": "PROVIDER_RESULT_UNCERTAIN", "updatedAt": now}, "$unset": {"workerId": "", "leaseExpiresAt": ""}},
+    ).modified_count
+    safe = collection.update_many(
+        {"broadcastId": broadcast_id, "status": "PROCESSING", "leaseExpiresAt": {"$lte": now}, "providerCallStartedAt": {"$exists": False}},
+        {"$set": {"status": "PENDING", "executionStatus": "PENDING", "updatedAt": now}, "$unset": {"workerId": "", "leaseExpiresAt": ""}},
+    ).modified_count
+    return {"requeued": safe, "uncertainFinal": uncertain}
+
+
+def approve_retryable_failures(broadcast_id: ObjectId, now: Any) -> int:
+    return get_collection("whatsapp_broadcast_recipients").update_many(
+        {"broadcastId": broadcast_id, "status": "FAILED_RETRYABLE", "retryEligibleAt": {"$lte": now}},
+        {"$set": {"status": "PENDING", "executionStatus": "PENDING", "updatedAt": now}, "$unset": {"failureCode": "", "failureStatusCode": "", "providerCallStartedAt": "", "retryEligibleAt": ""}},
+    ).modified_count
+
+
+def cancel_unsent(broadcast_id: ObjectId, now: Any) -> int:
+    return get_collection("whatsapp_broadcast_recipients").update_many(
+        {"broadcastId": broadcast_id, "status": {"$in": ["PENDING", "FAILED_RETRYABLE"]}},
+        {"$set": {"status": "SKIPPED", "executionStatus": "SKIPPED", "exclusionReason": "BROADCAST_CANCELLED", "updatedAt": now}},
+    ).modified_count
+
+
+def update_broadcast(broadcast_id: ObjectId, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    return get_collection("whatsapp_broadcasts").find_one_and_update({"_id": broadcast_id}, {"$set": updates}, return_document=ReturnDocument.AFTER)
+
+
+def update_active_broadcast(broadcast_id: ObjectId, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    return get_collection("whatsapp_broadcasts").find_one_and_update({"_id": broadcast_id, "status": {"$ne": "CANCELLED"}}, {"$set": updates}, return_document=ReturnDocument.AFTER)
+
+
+def transition_broadcast(broadcast_id: ObjectId, version: int, statuses: List[str], updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    return get_collection("whatsapp_broadcasts").find_one_and_update(
+        {"_id": broadcast_id, "version": version, "status": {"$in": statuses}},
+        {"$set": updates, "$inc": {"version": 1}}, return_document=ReturnDocument.AFTER,
+    )
+
+
+def execution_counts(broadcast_id: ObjectId) -> Dict[str, int]:
+    counts = {item["_id"]: item["count"] for item in get_collection("whatsapp_broadcast_recipients").aggregate([{"$match": {"broadcastId": broadcast_id}}, {"$group": {"_id": "$status", "count": {"$sum": 1}}}])}
+    return {
+        "processed": counts.get("ACCEPTED", 0) + counts.get("FAILED_RETRYABLE", 0) + counts.get("FAILED_FINAL", 0),
+        "accepted": counts.get("ACCEPTED", 0), "retryableFailure": counts.get("FAILED_RETRYABLE", 0),
+        "finalFailure": counts.get("FAILED_FINAL", 0), "remaining": counts.get("PENDING", 0) + counts.get("PROCESSING", 0),
+        "skipped": counts.get("SKIPPED", 0), "processing": counts.get("PROCESSING", 0),
+    }

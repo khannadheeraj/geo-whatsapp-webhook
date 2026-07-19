@@ -26,3 +26,10 @@ class BroadcastCreateModel(BaseModel):
 class BroadcastPrepareModel(BaseModel):
     version: int = Field(ge=1)
 
+
+class BroadcastVersionModel(BaseModel):
+    version: int = Field(ge=1)
+
+
+class BroadcastBatchModel(BaseModel):
+    batchSize: int = Field(default=10, ge=1, le=50)

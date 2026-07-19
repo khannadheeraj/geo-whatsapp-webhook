@@ -113,11 +113,17 @@ def record_outbound_template_message(
     template_language: Optional[str] = None,
     phone_number_id: Optional[str] = None,
     accepted_at: Optional[datetime] = None,
+    contact_id: Optional[Any] = None,
+    lead_id: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Foundation contract for senders; Phase 2A does not alter sending workflows."""
     occurred_at = accepted_at or _now()
     normalized_phone = _normalized_phone(phone)
-    contact, lead = _links(normalized_phone)
+    if contact_id is not None:
+        contact = {"_id": contact_id}
+        lead = {"_id": lead_id} if lead_id is not None else None
+    else:
+        contact, lead = _links(normalized_phone)
     conversation = (
         _conversation(
             normalized_phone,

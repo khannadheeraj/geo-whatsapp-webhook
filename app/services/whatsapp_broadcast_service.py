@@ -115,7 +115,7 @@ def prepare_broadcast(value: str, version: int, actor: Dict[str, Any], request_i
     for contact in _candidate_contacts(broadcast["recipientFilters"]):
         lead = leads.get(contact["_id"])
         if not _matches(lead or {}, broadcast["recipientFilters"]["lead"]): continue
-        status, reason, rendered = "ELIGIBLE", None, None
+        status, reason, rendered, provider_components = "ELIGIBLE", None, None, None
         if not contact.get("isActive"): status, reason = "SKIPPED", "CONTACT_INACTIVE"
         else:
             try: phone = normalize_indian_phone(contact.get("normalizedPhone"), "phone")
@@ -128,8 +128,8 @@ def prepare_broadcast(value: str, version: int, actor: Dict[str, Any], request_i
             if status == "ELIGIBLE":
                 values = [_value(mapping, contact, lead or {}) for mapping in broadcast["variableMappings"]]
                 if any(not item for item in values): status, reason = "REJECTED", "TEMPLATE_VARIABLE_MISSING"
-                else: rendered, _ = _render_and_build_components(template, _template_variables(template), values)
-        recipients.append({"broadcastId": broadcast_id, "contactId": contact["_id"], "leadId": lead.get("_id") if lead else None, "normalizedPhone": contact.get("normalizedPhone"), "displayName": contact.get("displayName"), "status": status, "exclusionReason": reason, "renderedText": rendered, "preparedAt": now})
+                else: rendered, provider_components = _render_and_build_components(template, _template_variables(template), values)
+        recipients.append({"broadcastId": broadcast_id, "contactId": contact["_id"], "leadId": lead.get("_id") if lead else None, "normalizedPhone": contact.get("normalizedPhone"), "displayName": contact.get("displayName"), "status": status, "exclusionReason": reason, "renderedText": rendered, "providerComponents": provider_components, "preparedAt": now})
     repository.replace_recipients(broadcast_id, recipients)
     reasons = Counter(item["exclusionReason"] for item in recipients if item["exclusionReason"])
     counts = {"eligible": sum(item["status"] == "ELIGIBLE" for item in recipients), "skipped": sum(item["status"] == "SKIPPED" for item in recipients), "rejected": sum(item["status"] == "REJECTED" for item in recipients), "byReason": dict(reasons)}
