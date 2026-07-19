@@ -1,5 +1,5 @@
 import logging
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import requests
 
@@ -17,7 +17,10 @@ def send_whatsapp_template(
     phone: str,
     template_name: str,
     name: str = "",
-    body_parameters: Optional[List[str]] = None
+    body_parameters: Optional[List[str]] = None,
+    *,
+    language_code: Optional[str] = None,
+    template_components: Optional[List[dict[str, Any]]] = None,
 ):
     if not WHATSAPP_ACCESS_TOKEN:
         logger.error("WHATSAPP_ACCESS_TOKEN is not configured.")
@@ -53,7 +56,7 @@ def send_whatsapp_template(
         "template": {
             "name": template_name,
             "language": {
-                "code": TEMPLATE_LANGUAGE_CODE
+                "code": language_code or TEMPLATE_LANGUAGE_CODE
             }
         }
     }
@@ -66,7 +69,9 @@ def send_whatsapp_template(
         else:
             body_parameters = []
 
-    if body_parameters:
+    if template_components is not None:
+        payload["template"]["components"] = template_components
+    elif body_parameters:
         payload["template"]["components"] = [
             {
                 "type": "body",

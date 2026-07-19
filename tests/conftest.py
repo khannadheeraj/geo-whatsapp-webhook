@@ -17,6 +17,7 @@ from app.db.mongodb import (
     ensure_phase1b_indexes,
     ensure_phase2a_indexes,
     ensure_phase2b1_indexes,
+    ensure_phase2c1_indexes,
     set_database_for_testing,
 )
 from main import app
@@ -31,6 +32,7 @@ def database():
     ensure_phase1b_indexes()
     ensure_phase2a_indexes()
     ensure_phase2b1_indexes()
+    ensure_phase2c1_indexes()
     return database
 
 
