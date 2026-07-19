@@ -1,4 +1,6 @@
 import logging
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, List, Optional
 
 import requests
@@ -11,6 +13,22 @@ from app.config import (
 )
 
 logger = logging.getLogger("whatsapp-webhook")
+
+
+def _retry_after_seconds(response) -> Optional[int]:
+    raw_value = str((getattr(response, "headers", {}) or {}).get("Retry-After") or "").strip()
+    if not raw_value:
+        return None
+    try:
+        return max(0, min(int(raw_value), 86400))
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(raw_value)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            return max(0, min(int((retry_at - datetime.now(timezone.utc)).total_seconds()), 86400))
+        except (TypeError, ValueError, OverflowError):
+            return None
 
 
 def send_whatsapp_template(
@@ -101,12 +119,16 @@ def send_whatsapp_template(
             }
 
         if response.status_code >= 400:
-            return {
+            result = {
                 "success": False,
                 "error": "WHATSAPP_API_ERROR",
                 "statusCode": response.status_code,
                 "response": response_data
             }
+            retry_after = _retry_after_seconds(response)
+            if retry_after is not None:
+                result["retryAfterSeconds"] = retry_after
+            return result
 
         return {
             "success": True,

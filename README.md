@@ -14,6 +14,8 @@ FastAPI backend for the GEO IAS CRM. The existing MongoDB, Meta configuration, w
 
 Production does not require or expect a production `.env` file. All production values are read from the existing process/service environment. Its exact delivery mechanism—such as systemd, a process manager, server exports, a deployment panel, or CI/CD—must be verified on the server and is not changed by this application.
 
+Scheduled broadcast execution requires a random backend-only `WHATSAPP_BROADCAST_WORKER_TOKEN` of at least 32 characters in that same process environment. The existing server scheduling mechanism must periodically call the protected `POST /internal/whatsapp-broadcasts/run-due` endpoint with the token in `X-Worker-Token`. No scheduler loop runs inside the web process, and the token must never be exposed to the frontend or stored in source control.
+
 ## Meta webhook signature verification
 
 `POST /webhooks/whatsapp` requires Meta's `X-Hub-Signature-256` header. The backend computes HMAC-SHA256 over the exact raw request bytes using `WHATSAPP_APP_SECRET` and compares the digest in constant time before parsing JSON. Missing, malformed, or invalid signatures receive a generic `401` response and are never processed or stored. `GET /webhooks/whatsapp` challenge verification continues using `WHATSAPP_VERIFY_TOKEN`.

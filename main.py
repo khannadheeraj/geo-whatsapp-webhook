@@ -20,6 +20,7 @@ from app.api.routes.whatsapp_templates import router as whatsapp_templates_route
 from app.api.routes.whatsapp_template_sends import router as whatsapp_template_sends_router
 from app.api.routes.whatsapp_conversations import router as whatsapp_conversations_router
 from app.api.routes.whatsapp_broadcasts import router as whatsapp_broadcasts_router
+from app.api.routes.internal_whatsapp_broadcasts import router as internal_whatsapp_broadcasts_router
 from app.config import ENVIRONMENT, get_security_settings, validate_security_configuration
 from app.db.mongodb import close_mongo_connection, connect_to_mongo
 from app.errors import ApiError
@@ -69,6 +70,7 @@ app.include_router(whatsapp_templates_router)
 app.include_router(whatsapp_template_sends_router)
 app.include_router(whatsapp_conversations_router)
 app.include_router(whatsapp_broadcasts_router)
+app.include_router(internal_whatsapp_broadcasts_router)
 app.include_router(users_router)
 app.include_router(campaign_router, dependencies=[Depends(require_super_admin)])
 app.include_router(analytics_router, dependencies=[Depends(require_super_admin)])

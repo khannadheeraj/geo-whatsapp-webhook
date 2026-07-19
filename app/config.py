@@ -45,6 +45,7 @@ WHATSAPP_ACCESS_TOKEN = _clean_env("WHATSAPP_ACCESS_TOKEN")
 WHATSAPP_PHONE_NUMBER_ID = _clean_env("WHATSAPP_PHONE_NUMBER_ID")
 WHATSAPP_WABA_ID = _clean_env("WHATSAPP_WABA_ID")
 WHATSAPP_APP_SECRET = _clean_env("WHATSAPP_APP_SECRET")
+WHATSAPP_BROADCAST_WORKER_TOKEN = _clean_env("WHATSAPP_BROADCAST_WORKER_TOKEN")
 WHATSAPP_GRAPH_API_VERSION = "v20.0"
 
 TEMPLATE_LANGUAGE_CODE = "en_US"
@@ -152,4 +153,6 @@ def validate_security_configuration() -> SecuritySettings:
         raise RuntimeError("WHATSAPP_APP_SECRET must be configured with at least 32 characters")
     if WHATSAPP_APP_SECRET.lower() in {"change-me", "changeme", "placeholder"}:
         raise RuntimeError("WHATSAPP_APP_SECRET uses a prohibited placeholder value")
+    if ENVIRONMENT in {"DEV", "PROD", "PRODUCTION"} and len(WHATSAPP_BROADCAST_WORKER_TOKEN) < 32:
+        raise RuntimeError("WHATSAPP_BROADCAST_WORKER_TOKEN must be configured with at least 32 characters")
     return settings

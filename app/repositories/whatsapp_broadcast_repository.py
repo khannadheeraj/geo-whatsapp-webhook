@@ -187,3 +187,155 @@ def list_report(query: Dict[str, Any], *, page: int, page_size: int) -> Tuple[Li
 
 def find_recipient(broadcast_id: ObjectId, recipient_id: ObjectId) -> Optional[Dict[str, Any]]:
     return get_collection("whatsapp_broadcast_recipients").find_one({"_id": recipient_id, "broadcastId": broadcast_id})
+
+
+def schedule_broadcast(broadcast_id: ObjectId, version: int, scheduled_for: Any, actor_id: Any, now: Any) -> Optional[Dict[str, Any]]:
+    return get_collection("whatsapp_broadcasts").find_one_and_update(
+        {
+            "_id": broadcast_id,
+            "version": version,
+            "status": "EXECUTING",
+            "schedulerState": {"$nin": ["RUNNING", "COMPLETED", "CANCELLED"]},
+            "executionStartedAt": {"$exists": False},
+        },
+        {
+            "$set": {
+                "schedulerState": "SCHEDULED",
+                "scheduledFor": scheduled_for,
+                "nextRunAt": scheduled_for,
+                "scheduledBy": actor_id,
+                "scheduleUpdatedAt": now,
+                "updatedAt": now,
+            },
+            "$unset": {
+                "schedulerLeaseUntil": "",
+                "schedulerWorkerId": "",
+                "lastSchedulerErrorCode": "",
+            },
+            "$inc": {"version": 1},
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+
+
+def unschedule_broadcast(broadcast_id: ObjectId, version: int, now: Any) -> Optional[Dict[str, Any]]:
+    return get_collection("whatsapp_broadcasts").find_one_and_update(
+        {
+            "_id": broadcast_id,
+            "version": version,
+            "status": "EXECUTING",
+            "schedulerState": {"$in": ["SCHEDULED", "WAITING_RETRY"]},
+        },
+        {
+            "$set": {"schedulerState": "UNSCHEDULED", "scheduleUpdatedAt": now, "updatedAt": now},
+            "$unset": {"scheduledFor": "", "nextRunAt": "", "scheduledBy": ""},
+            "$inc": {"version": 1},
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+
+
+def has_execution_started(broadcast_id: ObjectId) -> bool:
+    broadcast = get_collection("whatsapp_broadcasts").find_one({"_id": broadcast_id}, {"executionStartedAt": 1})
+    return bool(broadcast and broadcast.get("executionStartedAt")) or get_collection("whatsapp_broadcast_recipients").count_documents(
+        {"broadcastId": broadcast_id, "attemptCount": {"$gt": 0}}
+    ) > 0
+
+
+def mark_manual_execution_started(broadcast_id: ObjectId, now: Any) -> Optional[Dict[str, Any]]:
+    return get_collection("whatsapp_broadcasts").find_one_and_update(
+        {
+            "_id": broadcast_id,
+            "status": {"$in": ["CONFIRMED", "EXECUTING", "PAUSED_RETRYABLE"]},
+            "schedulerState": {"$nin": ["SCHEDULED", "WAITING_RETRY", "RUNNING"]},
+        },
+        {"$set": {"executionStartedAt": now, "updatedAt": now}},
+        return_document=ReturnDocument.AFTER,
+    )
+
+
+def claim_due_broadcast(worker_id: str, now: Any, lease_until: Any) -> Optional[Dict[str, Any]]:
+    return get_collection("whatsapp_broadcasts").find_one_and_update(
+        {
+            "status": {"$in": ["EXECUTING", "PAUSED_RETRYABLE"]},
+            "schedulerState": {"$in": ["SCHEDULED", "WAITING_RETRY", "RUNNING"]},
+            "nextRunAt": {"$lte": now},
+            "$or": [
+                {"schedulerState": {"$in": ["SCHEDULED", "WAITING_RETRY"]}},
+                {"schedulerState": "RUNNING", "schedulerLeaseUntil": {"$lte": now}},
+            ],
+        },
+        {
+            "$set": {
+                "schedulerState": "RUNNING",
+                "schedulerWorkerId": worker_id,
+                "schedulerLeaseUntil": lease_until,
+                "lastSchedulerRunStartedAt": now,
+                "executionStartedAt": now,
+                "updatedAt": now,
+            },
+        },
+        sort=[("nextRunAt", 1), ("_id", 1)],
+        return_document=ReturnDocument.AFTER,
+    )
+
+
+def release_scheduler_claim(broadcast_id: ObjectId, worker_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    return get_collection("whatsapp_broadcasts").find_one_and_update(
+        {"_id": broadcast_id, "schedulerState": "RUNNING", "schedulerWorkerId": worker_id},
+        {
+            "$set": updates,
+            "$unset": {"schedulerWorkerId": "", "schedulerLeaseUntil": ""},
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+
+
+def activate_due_retryable_failures(broadcast_id: ObjectId, now: Any, max_attempts: int) -> Dict[str, int]:
+    recipients = get_collection("whatsapp_broadcast_recipients")
+    due = {"broadcastId": broadcast_id, "status": "FAILED_RETRYABLE", "retryNotBefore": {"$lte": now}}
+    exhausted = recipients.update_many(
+        {**due, "attemptCount": {"$gte": max_attempts}},
+        {
+            "$set": {
+                "status": "FAILED_FINAL",
+                "executionStatus": "FAILED_FINAL",
+                "failureCode": "WHATSAPP_RETRY_ATTEMPTS_EXHAUSTED",
+                "retryExhaustedAt": now,
+                "updatedAt": now,
+            },
+            "$unset": {"retryEligibleAt": "", "retryNotBefore": ""},
+        },
+    ).modified_count
+    activated = recipients.update_many(
+        {**due, "attemptCount": {"$lt": max_attempts}},
+        {
+            "$set": {"status": "PENDING", "executionStatus": "PENDING", "updatedAt": now},
+            "$unset": {
+                "failureCode": "",
+                "failureStatusCode": "",
+                "providerCallStartedAt": "",
+                "retryEligibleAt": "",
+                "retryNotBefore": "",
+            },
+        },
+    ).modified_count
+    return {"activated": activated, "exhausted": exhausted}
+
+
+def next_retry_time(broadcast_id: ObjectId) -> Optional[Any]:
+    document = get_collection("whatsapp_broadcast_recipients").find_one(
+        {"broadcastId": broadcast_id, "status": "FAILED_RETRYABLE", "retryNotBefore": {"$exists": True}},
+        sort=[("retryNotBefore", 1), ("_id", 1)],
+    )
+    return document.get("retryNotBefore") if document else None
+
+
+def mark_scheduler_cancelled(broadcast_id: ObjectId, now: Any) -> None:
+    get_collection("whatsapp_broadcasts").update_one(
+        {"_id": broadcast_id, "schedulerState": {"$exists": True}},
+        {
+            "$set": {"schedulerState": "CANCELLED", "scheduleUpdatedAt": now, "updatedAt": now},
+            "$unset": {"nextRunAt": "", "schedulerWorkerId": "", "schedulerLeaseUntil": ""},
+        },
+    )

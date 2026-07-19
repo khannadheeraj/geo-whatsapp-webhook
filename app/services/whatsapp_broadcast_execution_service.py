@@ -15,6 +15,8 @@ from app.utils.mongo_utils import object_id_or_not_found
 
 LEASE_SECONDS = 120
 RETRY_DELAY_SECONDS = 60
+MAX_RETRY_ATTEMPTS = 4
+MAX_RETRY_DELAY_SECONDS = 3600
 ACTIVE_BROADCAST_STATES = {"CONFIRMED", "EXECUTING", "PAUSED_RETRYABLE"}
 
 
@@ -60,6 +62,18 @@ def _retryable(result: Dict[str, Any]) -> bool:
     return result.get("error") == "WHATSAPP_REQUEST_FAILED" or status_code == 429 or (isinstance(status_code, int) and status_code >= 500)
 
 
+def _retry_delay_seconds(recipient: Dict[str, Any], result: Dict[str, Any]) -> int:
+    attempt = max(1, int(recipient.get("attemptCount") or 1))
+    base = min(MAX_RETRY_DELAY_SECONDS, RETRY_DELAY_SECONDS * (2 ** (attempt - 1)))
+    jitter_range = max(1, base // 4)
+    material = f"{recipient['_id']}:{attempt}".encode("utf-8")
+    jitter = int.from_bytes(hashlib.sha256(material).digest()[:4], "big") % jitter_range
+    provider_delay = result.get("retryAfterSeconds")
+    if not isinstance(provider_delay, int) or provider_delay < 0:
+        provider_delay = 0
+    return min(86400, max(base + jitter, provider_delay))
+
+
 def _process(recipient: Dict[str, Any], broadcast: Dict[str, Any], worker_id: str) -> str:
     now = _now()
     key = _idempotency_key(broadcast["_id"], recipient["_id"])
@@ -67,11 +81,17 @@ def _process(recipient: Dict[str, Any], broadcast: Dict[str, Any], worker_id: st
     result = send_whatsapp_template(recipient["normalizedPhone"], broadcast["templateName"], language_code=broadcast["templateLanguage"], template_components=recipient.get("providerComponents") or None)
     if not result.get("success"):
         retryable = _retryable(result)
-        status = "FAILED_RETRYABLE" if retryable else "FAILED_FINAL"
-        updates = {"status": status, "failureCode": str(result.get("error") or "WHATSAPP_BROADCAST_SEND_FAILED")[:100], "failureStatusCode": result.get("statusCode"), "idempotencyKey": key, "updatedAt": _now()}
-        if retryable: updates["retryEligibleAt"] = _now() + timedelta(seconds=RETRY_DELAY_SECONDS)
+        exhausted = retryable and int(recipient.get("attemptCount") or 0) >= MAX_RETRY_ATTEMPTS
+        status = "FAILED_RETRYABLE" if retryable and not exhausted else "FAILED_FINAL"
+        failure_code = "WHATSAPP_RETRY_ATTEMPTS_EXHAUSTED" if exhausted else str(result.get("error") or "WHATSAPP_BROADCAST_SEND_FAILED")[:100]
+        updates = {"status": status, "failureCode": failure_code, "failureStatusCode": result.get("statusCode"), "idempotencyKey": key, "updatedAt": _now()}
+        if retryable and not exhausted:
+            retry_at = _now() + timedelta(seconds=_retry_delay_seconds(recipient, result))
+            updates.update({"retryEligibleAt": retry_at, "retryNotBefore": retry_at})
+        if exhausted:
+            updates["retryExhaustedAt"] = _now()
         repository.finish_recipient(recipient["_id"], worker_id, updates)
-        return status
+        return "RETRY_EXHAUSTED" if exhausted else status
     provider_id = ((result.get("response") or {}).get("messages") or [{}])[0].get("id")
     if not provider_id:
         repository.finish_recipient(recipient["_id"], worker_id, {"status": "FAILED_FINAL", "failureCode": "WHATSAPP_PROVIDER_RESPONSE_INVALID", "idempotencyKey": key, "updatedAt": _now()})
@@ -86,12 +106,18 @@ def _process(recipient: Dict[str, Any], broadcast: Dict[str, Any], worker_id: st
     return "ACCEPTED"
 
 
-def execute_batch(value: str, batch_size: int, actor: Dict[str, Any], request_id: str) -> Dict[str, Any]:
+def execute_batch(value: str, batch_size: int, actor: Dict[str, Any], request_id: str, *, automatic: bool = False) -> Dict[str, Any]:
     broadcast = _broadcast(value)
     if broadcast.get("status") == "COMPLETED":
         return {**_safe_execution(broadcast), "batch": {"claimed": 0, "accepted": 0, "retryableFailure": 0, "finalFailure": 0}, "leaseRecovery": {"requeued": 0, "uncertainFinal": 0}}
     if broadcast.get("status") not in ACTIVE_BROADCAST_STATES: raise ConflictError("WHATSAPP_BROADCAST_NOT_EXECUTABLE", "The broadcast is not available for batch execution.")
-    now = _now(); recovery = repository.recover_expired_leases(broadcast["_id"], now); worker_id = f"broadcast-worker:{uuid.uuid4()}"; outcomes = {"claimed": 0, "accepted": 0, "retryableFailure": 0, "finalFailure": 0}
+    if not automatic and broadcast.get("schedulerState") in {"SCHEDULED", "WAITING_RETRY", "RUNNING"}:
+        raise ConflictError("WHATSAPP_BROADCAST_SCHEDULE_ACTIVE", "Remove the active schedule before running a manual batch.")
+    if not automatic:
+        broadcast = repository.mark_manual_execution_started(broadcast["_id"], _now())
+        if not broadcast:
+            raise ConflictError("WHATSAPP_BROADCAST_SCHEDULE_ACTIVE", "Remove the active schedule before running a manual batch.")
+    now = _now(); recovery = repository.recover_expired_leases(broadcast["_id"], now); worker_id = f"broadcast-worker:{uuid.uuid4()}"; outcomes = {"claimed": 0, "accepted": 0, "retryableFailure": 0, "finalFailure": 0, "retryExhausted": 0}
     for _ in range(batch_size):
         recipient = repository.claim_next_recipient(broadcast["_id"], worker_id, _now(), _now() + timedelta(seconds=LEASE_SECONDS))
         if not recipient: break
@@ -99,12 +125,16 @@ def execute_batch(value: str, batch_size: int, actor: Dict[str, Any], request_id
         if outcome == "ACCEPTED": outcomes["accepted"] += 1
         elif outcome == "FAILED_RETRYABLE": outcomes["retryableFailure"] += 1
         elif outcome == "FAILED_FINAL": outcomes["finalFailure"] += 1
+        elif outcome == "RETRY_EXHAUSTED": outcomes["finalFailure"] += 1; outcomes["retryExhausted"] += 1
     totals = repository.execution_counts(broadcast["_id"])
     state = "EXECUTING" if totals["remaining"] else ("PAUSED_RETRYABLE" if totals["retryableFailure"] else "COMPLETED")
     updates = {"status": state, "executionTotals": totals, "updatedAt": _now()}
     if state == "COMPLETED": updates["completedAt"] = _now()
     broadcast = repository.update_active_broadcast(broadcast["_id"], updates) or repository.find_broadcast(broadcast["_id"])
-    write_audit_event("WHATSAPP_BROADCAST_BATCH_EXECUTED", "SUCCEEDED", actor_user_id=actor["_id"], entity_type="WHATSAPP_BROADCAST", entity_id=broadcast["_id"], request_id=request_id, compact_metadata={**outcomes, **recovery})
+    action = "WHATSAPP_BROADCAST_AUTOMATIC_BATCH_EXECUTED" if automatic else "WHATSAPP_BROADCAST_BATCH_EXECUTED"
+    write_audit_event(action, "SUCCEEDED", actor_user_id=actor.get("_id"), entity_type="WHATSAPP_BROADCAST", entity_id=broadcast["_id"], request_id=request_id, compact_metadata={**outcomes, **recovery})
+    if outcomes["retryExhausted"]:
+        write_audit_event("WHATSAPP_BROADCAST_RETRY_EXHAUSTED", "SUCCEEDED", actor_user_id=actor.get("_id"), entity_type="WHATSAPP_BROADCAST", entity_id=broadcast["_id"], request_id=request_id, compact_metadata={"count": outcomes["retryExhausted"]})
     return {**_safe_execution(broadcast), "batch": outcomes, "leaseRecovery": recovery}
 
 
@@ -125,6 +155,7 @@ def cancel(value: str, version: int, actor: Dict[str, Any], request_id: str) -> 
     now = _now(); broadcast = repository.transition_broadcast(broadcast["_id"], version, list(ACTIVE_BROADCAST_STATES), {"status": "CANCELLED", "cancelledAt": now, "cancelledBy": actor["_id"], "updatedAt": now})
     if not broadcast: raise ConflictError("WHATSAPP_BROADCAST_CANCEL_CONFLICT", "The current broadcast cannot be cancelled.")
     cancelled = repository.cancel_unsent(broadcast["_id"], now)
+    repository.mark_scheduler_cancelled(broadcast["_id"], now)
     broadcast = repository.update_broadcast(broadcast["_id"], {"executionTotals": repository.execution_counts(broadcast["_id"]), "updatedAt": now})
     write_audit_event("WHATSAPP_BROADCAST_CANCELLED", "SUCCEEDED", actor_user_id=actor["_id"], entity_type="WHATSAPP_BROADCAST", entity_id=broadcast["_id"], request_id=request_id, compact_metadata={"cancelledUnsent": cancelled})
     return {**_safe_execution(broadcast), "cancelledUnsent": cancelled}

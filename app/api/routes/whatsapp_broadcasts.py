@@ -4,10 +4,11 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.api.dependencies.auth import require_super_admin
 from app.api.response_helpers import pagination_metadata
-from app.schemas.whatsapp_broadcast_schema import BroadcastBatchModel, BroadcastCreateModel, BroadcastPrepareModel, BroadcastVersionModel
+from app.schemas.whatsapp_broadcast_schema import BroadcastBatchModel, BroadcastCreateModel, BroadcastPrepareModel, BroadcastScheduleModel, BroadcastVersionModel
 from app.services.whatsapp_broadcast_service import create_broadcast, delete_broadcast, get_broadcast, prepare_broadcast, recipients
 from app.services.whatsapp_broadcast_execution_service import cancel, confirm, execute_batch, execution, retry_failures
 from app.services.whatsapp_broadcast_analytics_service import analytics, recipient_detail, report
+from app.services.whatsapp_broadcast_scheduler_service import schedule, scheduler_state, unschedule
 from app.utils.mongo_utils import public_document
 
 router = APIRouter(prefix="/whatsapp-broadcasts", tags=["WhatsApp Broadcasts"])
@@ -66,3 +67,15 @@ async def retry_failures_route(broadcastId: str, payload: BroadcastVersionModel,
 @router.post("/{broadcastId}/cancel")
 async def cancel_route(broadcastId: str, payload: BroadcastVersionModel, request: Request, user=Depends(require_super_admin)):
     return {"data": cancel(broadcastId, payload.version, user, request.state.request_id)}
+
+@router.post("/{broadcastId}/schedule")
+async def schedule_route(broadcastId: str, payload: BroadcastScheduleModel, request: Request, user=Depends(require_super_admin)):
+    return {"data": schedule(broadcastId, payload.version, payload.scheduledFor, user, request.state.request_id)}
+
+@router.delete("/{broadcastId}/schedule")
+async def unschedule_route(broadcastId: str, request: Request, version: int = Query(..., ge=1), user=Depends(require_super_admin)):
+    return {"data": unschedule(broadcastId, version, user, request.state.request_id)}
+
+@router.get("/{broadcastId}/schedule")
+async def schedule_state_route(broadcastId: str, user=Depends(require_super_admin)):
+    return {"data": scheduler_state(broadcastId)}

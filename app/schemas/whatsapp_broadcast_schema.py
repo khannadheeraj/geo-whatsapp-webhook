@@ -1,6 +1,8 @@
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from datetime import datetime
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class BroadcastVariableMappingModel(BaseModel):
@@ -33,3 +35,20 @@ class BroadcastVersionModel(BaseModel):
 
 class BroadcastBatchModel(BaseModel):
     batchSize: int = Field(default=10, ge=1, le=50)
+
+
+class BroadcastScheduleModel(BaseModel):
+    version: int = Field(ge=1)
+    scheduledFor: datetime
+
+    @field_validator("scheduledFor")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("scheduledFor must include a timezone offset")
+        return value
+
+
+class DueBroadcastRunModel(BaseModel):
+    batchSize: int = Field(default=10, ge=1, le=50)
+    maxBroadcasts: int = Field(default=10, ge=1, le=50)
