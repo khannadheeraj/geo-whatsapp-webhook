@@ -16,6 +16,7 @@ from app.api.routes.reassignment_requests import router as reassignment_requests
 from app.api.routes.template import router as template_router
 from app.api.routes.users import router as users_router
 from app.api.routes.whatsapp_webhook import router as whatsapp_webhook_router
+from app.api.routes.whatsapp_templates import router as whatsapp_templates_router
 from app.config import ENVIRONMENT, get_security_settings, validate_security_configuration
 from app.db.mongodb import close_mongo_connection, connect_to_mongo
 from app.errors import ApiError
@@ -61,6 +62,7 @@ app.include_router(dashboard_router)
 app.include_router(leads_router)
 app.include_router(reassignment_requests_router)
 app.include_router(template_router, dependencies=[Depends(require_authenticated_user)])
+app.include_router(whatsapp_templates_router)
 app.include_router(users_router)
 app.include_router(campaign_router, dependencies=[Depends(require_super_admin)])
 app.include_router(analytics_router, dependencies=[Depends(require_super_admin)])

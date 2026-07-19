@@ -303,6 +303,32 @@ def ensure_phase2a_indexes() -> None:
     )
 
 
+def ensure_phase2b1_indexes() -> None:
+    templates = get_collection("whatsapp_templates")
+    templates.create_index(
+        [
+            ("businessAccountId", ASCENDING),
+            ("providerTemplateKey", ASCENDING),
+            ("language", ASCENDING),
+        ],
+        unique=True,
+        name="uq_whatsapp_template_provider_language",
+    )
+    templates.create_index(
+        [
+            ("status", ASCENDING),
+            ("isActive", ASCENDING),
+            ("category", ASCENDING),
+            ("name", ASCENDING),
+        ],
+        name="ix_whatsapp_template_active_catalogue",
+    )
+    templates.create_index(
+        [("businessAccountId", ASCENDING), ("lastSeenSyncId", ASCENDING)],
+        name="ix_whatsapp_template_sync_marker",
+    )
+
+
 def connect_to_mongo() -> None:
     global mongo_client, db
 
@@ -311,6 +337,7 @@ def connect_to_mongo() -> None:
         ensure_phase1a_indexes()
         ensure_phase1b_indexes()
         ensure_phase2a_indexes()
+        ensure_phase2b1_indexes()
         return
     if not MONGODB_URI:
         raise RuntimeError("MongoDB configuration is missing")
@@ -322,6 +349,7 @@ def connect_to_mongo() -> None:
         ensure_phase1a_indexes()
         ensure_phase1b_indexes()
         ensure_phase2a_indexes()
+        ensure_phase2b1_indexes()
         logger.info("MongoDB connected and application indexes verified.")
     except PyMongoError as exc:
         logger.error("MongoDB connection or index validation failed (%s).", type(exc).__name__)
