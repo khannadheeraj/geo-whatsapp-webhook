@@ -130,6 +130,29 @@ def test_exact_variable_count_is_enforced_for_eligible_contact(client, database,
     assert response.json()["error"]["code"] == "TEMPLATE_VARIABLE_COUNT_INVALID"
 
 
+def test_normalized_template_without_placeholders_accepts_empty_values_and_ignores_examples(client, database, monkeypatch):
+    _user(database, "admin@example.com", UserRole.SUPER_ADMIN.value)
+    contact_id, template_id = _seed_contact_template(database)
+    database.whatsapp_templates.update_one({"_id": template_id}, {"$set": {
+        "headers": [{"type": "HEADER", "format": "TEXT", "text": "Admission update", "example": {"header_text": ["sample only"]}}],
+        "body": {"type": "BODY", "text": "Your application is under review.", "example": {"body_text": [["sample only"]]}},
+        "buttons": [{"type": "URL", "text": "Open portal", "url": "https://example.test/portal"}],
+    }})
+    _configure(monkeypatch)
+    monkeypatch.setattr(
+        "app.services.whatsapp_template_send_service.send_whatsapp_template",
+        lambda *args, **kwargs: {"success": True, "response": {"messages": [{"id": "wamid.no-vars-1"}]}},
+    )
+
+    response = client.post(
+        "/whatsapp-template-sends",
+        headers={**_headers(client, "admin@example.com"), "Idempotency-Key": "send-no-vars-001"},
+        json={"contactId": str(contact_id), "templateId": str(template_id), "variableValues": []},
+    )
+
+    assert response.status_code == 200
+
+
 def test_idempotency_replays_success_without_resending(client, database, monkeypatch):
     _user(database, "admin@example.com", UserRole.SUPER_ADMIN.value)
     contact_id, template_id = _seed_contact_template(database)
