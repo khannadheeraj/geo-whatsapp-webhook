@@ -3,8 +3,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 from app.api.dependencies.auth import require_authenticated_user
 from app.api.response_helpers import list_response
-from app.schemas.follow_up_schema import FollowUpActionModel, FollowUpCreateModel, FollowUpPatchModel
-from app.services.follow_up_service import action, create, get, list_follow_ups, patch, work_queue
+from app.schemas.follow_up_schema import FollowUpActionModel, FollowUpCreateModel, FollowUpPatchModel, FollowUpOutcome
+from app.services.follow_up_service import action, completion_recommendation, create, get, list_follow_ups, patch, work_queue
 from app.utils.mongo_utils import public_document, serialize_value
 router = APIRouter(prefix="/follow-ups", tags=["Follow-ups"])
 @router.post("")
@@ -18,6 +18,8 @@ async def work_queue_route(page:int=Query(1,ge=1), pageSize:int=Query(25,ge=1,le
 @router.get("/work-queue/summary")
 async def work_queue_summary_route(assignedCounsellorId:Optional[str]=None, user=Depends(require_authenticated_user)):
     _,counts,_=work_queue(user, group="OVERDUE", assigned=assignedCounsellorId, page=1, page_size=1); return {"data":counts}
+@router.get("/{followUpId}/completion-recommendation")
+async def completion_recommendation_route(followUpId:str, outcome:Optional[FollowUpOutcome]=None, user=Depends(require_authenticated_user)): return {"data":serialize_value(completion_recommendation(followUpId, user, outcome))}
 @router.get("/{followUpId}")
 async def detail_route(followUpId:str,user=Depends(require_authenticated_user)): return {"data":public_document(get(followUpId,user))}
 @router.patch("/{followUpId}")

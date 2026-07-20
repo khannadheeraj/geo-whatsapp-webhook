@@ -5,6 +5,7 @@ from bson import ObjectId
 from app.db.mongodb import get_collection
 from app.errors import AuthorizationError, ConflictError, NotFoundError, ValidationApiError
 from app.models.user_model import UserRole
+from app.models.crm_model import LeadStatus
 from app.repositories import follow_up_repository as repository
 from app.services.activity_service import record_activity
 from app.services.assignment_service import validate_counsellor
@@ -24,8 +25,40 @@ def _due(value):
     if value.tzinfo is None or value.utcoffset() is None or value.astimezone(timezone.utc) <= _now(): raise ValidationApiError("FOLLOW_UP_DUE_AT_INVALID", "The follow-up due time must be in the future.")
     return value.astimezone(timezone.utc)
 def _event(action, task, actor, request_id):
-    record_activity(f"FOLLOW_UP_{action}", f"Follow-up {action.lower()}.", contact_id=task["contactId"], lead_id=task["leadId"], actor_user_id=actor["_id"], metadata={"followUpId": task["_id"], "status": task["status"]}, related_entity_type="FOLLOW_UP", related_entity_id=task["_id"])
-    write_audit_event(f"FOLLOW_UP_{action}", "SUCCEEDED", actor_user_id=actor["_id"], entity_type="FOLLOW_UP", entity_id=task["_id"], request_id=request_id, compact_metadata={"status": task["status"]})
+    metadata = {"followUpId": task["_id"], "status": task["status"]}
+    for key in ("previousLeadStatus", "recommendedLeadStatus", "appliedLeadStatus", "leadStatusDecision"):
+        if key in task: metadata[key] = task[key]
+    record_activity(f"FOLLOW_UP_{action}", f"Follow-up {action.lower()}.", contact_id=task["contactId"], lead_id=task["leadId"], actor_user_id=actor["_id"], metadata=metadata, related_entity_type="FOLLOW_UP", related_entity_id=task["_id"])
+    write_audit_event(f"FOLLOW_UP_{action}", "SUCCEEDED", actor_user_id=actor["_id"], entity_type="FOLLOW_UP", entity_id=task["_id"], request_id=request_id, compact_metadata=metadata)
+
+_OUTCOME_RECOMMENDATIONS = {
+    "CONNECTED_INTERESTED": LeadStatus.INTERESTED.value,
+    "CONNECTED_NOT_INTERESTED": LeadStatus.LOST.value,
+    "CALLBACK_REQUESTED": LeadStatus.NEEDS_CONTACT.value,
+    "NO_ANSWER": LeadStatus.NEEDS_CONTACT.value,
+    "BUSY": LeadStatus.NEEDS_CONTACT.value,
+    "WRONG_NUMBER": LeadStatus.NEEDS_CONTACT.value,
+}
+_PROTECTED_RECOMMENDATION_STATUSES = {
+    LeadStatus.DEMO_REGISTERED.value, LeadStatus.DEMO_ATTENDED.value,
+    LeadStatus.ADMISSION_IN_PROGRESS.value, LeadStatus.ADMITTED.value,
+    LeadStatus.DO_NOT_CONTACT.value, LeadStatus.INVALID_CONTACT.value, LeadStatus.LOST.value,
+}
+
+def _recommendation(lead, outcome):
+    current = lead.get("status") or LeadStatus.NEW.value
+    suggested = _OUTCOME_RECOMMENDATIONS.get(outcome)
+    if suggested and current in _PROTECTED_RECOMMENDATION_STATUSES and current != suggested:
+        return None, "CURRENT_STATUS_PROTECTED"
+    return suggested, None
+
+def completion_recommendation(value, user, outcome=None):
+    task = get(value, user)
+    if task.get("status") != "PENDING": raise ConflictError("FOLLOW_UP_NOT_PENDING", "Only pending follow-ups can be completed.")
+    lead = _lead(task["contactId"])
+    current = lead.get("status") or LeadStatus.NEW.value
+    recommended, reason = _recommendation(lead, outcome) if outcome else (None, None)
+    return {"followUpId": task["_id"], "currentLeadStatus": current, "recommendedLeadStatus": recommended, "recommendationUnavailableReason": reason, "recommendations": _OUTCOME_RECOMMENDATIONS, "protectedCurrentStatus": current in _PROTECTED_RECOMMENDATION_STATUSES}
 def create(payload, user, request_id):
     contact_id = object_id_or_not_found(payload.contactId, "contact"); contact = get_collection("contacts").find_one({"_id": contact_id, "entityType": "CONTACT"})
     if not contact: raise NotFoundError("CONTACT_NOT_FOUND", "The requested Contact was not found.")
@@ -53,7 +86,9 @@ def patch(value, payload, user, request_id):
     _event("UPDATED", updated, user, request_id); return updated
 def action(value, payload, user, request_id, status):
     task = get(value, user)
-    if task["status"] != "PENDING": raise ConflictError("FOLLOW_UP_NOT_PENDING", "Only pending follow-ups can be completed or cancelled.")
+    if task["status"] != "PENDING":
+        if status == "COMPLETED" and task["status"] == "COMPLETED": return task
+        raise ConflictError("FOLLOW_UP_NOT_PENDING", "Only pending follow-ups can be completed or cancelled.")
     now = _now(); updates = {"status": status, "updatedAt": now, "updatedBy": user["_id"], ("completedAt" if status == "COMPLETED" else "cancelledAt"): now, ("completedBy" if status == "COMPLETED" else "cancelledBy"): user["_id"]}
     note = payload.completionNote if status == "COMPLETED" else payload.cancellationNote
     if note and note.strip(): updates["completionNote" if status == "COMPLETED" else "cancellationNote"] = note.strip()
@@ -64,10 +99,25 @@ def action(value, payload, user, request_id, status):
         for key, field in (("discussionSummary", "discussionSummary"), ("studentQuestionsOrObjections", "studentQuestionsOrObjections"), ("nextAction", "nextAction")):
             item = getattr(payload, field, None)
             if item and item.strip(): updates[key] = item.strip()
-        if payload.leadStatus:
-            get_collection("leads").update_one({"_id": task["leadId"], "isActive": True}, {"$set": {"status": payload.leadStatus, "updatedAt": now, "updatedBy": user["_id"]}, "$inc": {"version": 1}})
+        lead = _lead(task["contactId"])
+        previous_status = lead.get("status") or LeadStatus.NEW.value
+        recommended_status, protection_reason = _recommendation(lead, payload.outcome)
+        requested_status = payload.leadStatus.value if payload.leadStatus else None
+        decision = payload.leadStatusDecision
+        if requested_status:
+            decision = "MANUAL_OVERRIDE"
+            applied_status = requested_status
+        elif decision == "RECOMMENDATION_ACCEPTED":
+            if not recommended_status: raise ValidationApiError("FOLLOW_UP_RECOMMENDATION_UNAVAILABLE", "No Lead-status recommendation is available for this outcome and current Lead status.")
+            applied_status = recommended_status
+        else:
+            decision = "KEPT_CURRENT"
+            applied_status = previous_status
+        updates.update({"previousLeadStatus": previous_status, "recommendedLeadStatus": recommended_status, "appliedLeadStatus": applied_status, "leadStatusDecision": decision})
     updated = repository.update(task["_id"], payload.version, {}, updates)
     if not updated: raise ConflictError("FOLLOW_UP_VERSION_CONFLICT", "The follow-up changed elsewhere. Refresh and try again.")
+    if status == "COMPLETED" and updated.get("appliedLeadStatus") != updated.get("previousLeadStatus"):
+        get_collection("leads").update_one({"_id": task["leadId"], "isActive": True}, {"$set": {"status": updated["appliedLeadStatus"], "updatedAt": now, "updatedBy": user["_id"]}, "$inc": {"version": 1}})
     if status == "COMPLETED" and payload.nextFollowUpAt:
         due_at = _due(payload.nextFollowUpAt)
         next_task = repository.insert({"contactId": task["contactId"], "leadId": task["leadId"], "assignedCounsellorId": task["assignedCounsellorId"], "type": payload.nextFollowUpType or task["type"], "dueAt": due_at, "priority": payload.nextFollowUpPriority or task["priority"], "status": "PENDING", "purpose": (payload.nextAction or task["purpose"]).strip(), "createdBy": user["_id"], "createdAt": now, "updatedBy": user["_id"], "updatedAt": now, "version": 1, "previousFollowUpId": task["_id"]})

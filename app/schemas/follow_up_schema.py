@@ -2,10 +2,12 @@ from datetime import datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
+from app.models.crm_model import LeadStatus
 
 FollowUpType = Literal["CALL", "WHATSAPP", "MEETING", "DOCUMENT", "PAYMENT", "GENERAL"]
 FollowUpPriority = Literal["LOW", "MEDIUM", "HIGH", "URGENT"]
 FollowUpOutcome = Literal["CONNECTED_INTERESTED", "CONNECTED_NOT_INTERESTED", "CALLBACK_REQUESTED", "NO_ANSWER", "BUSY", "WRONG_NUMBER", "GENERAL_COMPLETED"]
+LeadStatusDecision = Literal["RECOMMENDATION_ACCEPTED", "MANUAL_OVERRIDE", "KEPT_CURRENT"]
 
 
 class FollowUpCreateModel(BaseModel):
@@ -45,7 +47,8 @@ class FollowUpActionModel(BaseModel):
     nextFollowUpAt: Optional[datetime] = None
     nextFollowUpType: Optional[FollowUpType] = None
     nextFollowUpPriority: Optional[FollowUpPriority] = "MEDIUM"
-    leadStatus: Optional[str] = Field(default=None, max_length=100)
+    leadStatus: Optional[LeadStatus] = None
+    leadStatusDecision: Optional[LeadStatusDecision] = None
 
     @field_validator("nextFollowUpAt")
     @classmethod
