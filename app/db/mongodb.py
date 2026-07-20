@@ -380,6 +380,12 @@ def ensure_phase3a_indexes() -> None:
     states.create_index([("followUpId", ASCENDING), ("userId", ASCENDING)], unique=True, name="uq_follow_up_reminder_user_state")
     states.create_index([("userId", ASCENDING), ("snoozedUntil", ASCENDING)], name="ix_follow_up_reminder_snooze")
 
+def ensure_phase3f_indexes() -> None:
+    tasks = get_collection("follow_up_tasks")
+    tasks.create_index([("leadId", ASCENDING), ("completedAt", DESCENDING)], name="ix_follow_up_report_completed")
+    tasks.create_index([("leadId", ASCENDING), ("createdAt", DESCENDING)], name="ix_follow_up_report_created")
+    tasks.create_index([("leadId", ASCENDING), ("cancelledAt", DESCENDING)], name="ix_follow_up_report_cancelled")
+
 
 def connect_to_mongo() -> None:
     global mongo_client, db
@@ -394,6 +400,7 @@ def connect_to_mongo() -> None:
         ensure_phase2d1_indexes()
         ensure_phase2e1_indexes()
         ensure_phase3a_indexes()
+        ensure_phase3f_indexes()
         return
     if not MONGODB_URI:
         raise RuntimeError("MongoDB configuration is missing")
@@ -410,6 +417,7 @@ def connect_to_mongo() -> None:
         ensure_phase2d1_indexes()
         ensure_phase2e1_indexes()
         ensure_phase3a_indexes()
+        ensure_phase3f_indexes()
         logger.info("MongoDB connected and application indexes verified.")
     except PyMongoError as exc:
         logger.error("MongoDB connection or index validation failed (%s).", type(exc).__name__)
