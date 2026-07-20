@@ -376,6 +376,9 @@ def ensure_phase3a_indexes() -> None:
     tasks.create_index([("status", ASCENDING), ("dueAt", ASCENDING)], name="ix_follow_up_status_due")
     tasks.create_index([("leadId", ASCENDING), ("dueAt", ASCENDING)], name="ix_follow_up_lead_due")
     tasks.create_index([("status", ASCENDING), ("dueAt", ASCENDING), ("assignedCounsellorId", ASCENDING)], name="ix_follow_up_overdue")
+    states = get_collection("follow_up_reminder_states")
+    states.create_index([("followUpId", ASCENDING), ("userId", ASCENDING)], unique=True, name="uq_follow_up_reminder_user_state")
+    states.create_index([("userId", ASCENDING), ("snoozedUntil", ASCENDING)], name="ix_follow_up_reminder_snooze")
 
 
 def connect_to_mongo() -> None:
